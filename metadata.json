@@ -1,0 +1,5 @@
+{
+  "name": "PC Vũng Tàu - Ghi chỉ số",
+  "description": "Ứng dụng ghi chỉ số điện cho PC Vũng Tàu, đồng bộ trực tiếp với Google Sheets.",
+  "requestFramePermissions": ["geolocation"]
+}
