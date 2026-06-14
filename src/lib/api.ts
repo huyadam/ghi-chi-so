@@ -130,34 +130,64 @@ export async function updateReading(
   return true;
 }
 
+export interface AutoUpdateResult {
+  filled: number;             // số dòng được ghi "Ghi tự động"
+  skippedExisting: string[];  // MÃ đã có chỉ số thật → giữ nguyên
+  notFound: string[];         // MÃ không tồn tại trong DB
+  filledMaKhang: string[];    // MÃ thực sự được ghi (để cập nhật cache local)
+}
+
 export async function autoUpdateReadings(
   maKhangList: string[],
   user: string,
   thoiGian: string
-): Promise<number> {
-  let updatedCount = 0;
-
-  // Batch update bằng cách gọi từng nhóm nhỏ
+): Promise<AutoUpdateResult> {
+  const result: AutoUpdateResult = { filled: 0, skippedExisting: [], notFound: [], filledMaKhang: [] };
   const BATCH_SIZE = 50;
+
+  // "Có chỉ số thật" = khác null/rỗng VÀ khác 'Ghi tự động' (cho phép ghi đè lại nhãn tự động)
+  const isRealReading = (v: any) =>
+    v !== null && v !== undefined && String(v).trim() !== '' && String(v).trim() !== 'Ghi tự động';
+
   for (let i = 0; i < maKhangList.length; i += BATCH_SIZE) {
     const batch = maKhangList.slice(i, i + BATCH_SIZE);
 
-    const { data, error } = await supabase
+    // 1) Đọc trạng thái hiện tại
+    const { data: rows, error: selErr } = await supabase
+      .from('customers')
+      .select('MA_KHANG, CHI_SO')
+      .in('MA_KHANG', batch);
+    if (selErr) { console.error('autoUpdate select error:', selErr); continue; }
+
+    // 2) Phân loại theo MÃ
+    const found = new Set<string>();
+    const hasReading = new Set<string>();
+    (rows ?? []).forEach((r: any) => {
+      found.add(r.MA_KHANG);
+      if (isRealReading(r.CHI_SO)) hasReading.add(r.MA_KHANG);
+    });
+
+    const toFill: string[] = [];
+    for (const ma of batch) {
+      if (!found.has(ma)) result.notFound.push(ma);
+      else if (hasReading.has(ma)) result.skippedExisting.push(ma);
+      else toFill.push(ma);
+    }
+    if (toFill.length === 0) continue;
+
+    // 3) Chỉ ghi tự động vào MÃ đang rỗng
+    const { data: upd, error: updErr } = await supabase
       .from('customers')
       .update({ USER: user, CHI_SO: 'Ghi tự động', THOIGIAN_GHI: thoiGian })
-      .in('MA_KHANG', batch)
+      .in('MA_KHANG', toFill)
       .select('id');
+    if (updErr) { console.error('autoUpdate update error:', updErr); continue; }
 
-    if (error) {
-      console.error('Supabase autoUpdate batch error:', error);
-    } else {
-      // Đếm theo số dòng THỰC SỰ được cập nhật (1 KH có thể có nhiều BCS),
-      // tránh cộng nhầm những MA_KHANG không tồn tại trong DB.
-      updatedCount += data?.length ?? 0;
-    }
+    result.filled += upd?.length ?? 0;
+    result.filledMaKhang.push(...toFill);
   }
 
-  return updatedCount;
+  return result;
 }
 
 export async function updateCoordinates(

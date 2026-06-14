@@ -3,7 +3,7 @@
 Để ứng dụng web có thể đọc và ghi dữ liệu vào Google Sheet của bạn, bạn cần tạo một Web App bằng Google Apps Script.
 
 ## Bước 1: Mở Google Sheet
-1. Mở file Google Sheet của bạn: https://docs.google.com/spreadsheets/d/1RZCMXqFZEpoXLh75LrfsVh3GrrlgTpswxgoltr2cAcU/edit
+1. Mở file Google Sheet của bạn: https://docs.google.com/spreadsheets/d/1TOeLylAh5S3wdLGZRAl_mkK6OemzcVZm9wgywCiOQLI/edit
 2. Trên thanh menu, chọn **Tiện ích mở rộng** (Extensions) > **Apps Script**.
 
 ## Bước 2: Dán mã code
@@ -12,7 +12,7 @@ Bạn có thể copy mã code trực tiếp từ file `code_GAS.js` trong thư m
 Hoặc copy đoạn code dưới đây:
 
 ```javascript
-const SHEET_ID = '1RZCMXqFZEpoXLh75LrfsVh3GrrlgTpswxgoltr2cAcU';
+const SHEET_ID = '1TOeLylAh5S3wdLGZRAl_mkK6OemzcVZm9wgywCiOQLI';
 
 function doGet(e) {
   const action = e.parameter.action;
@@ -141,7 +141,18 @@ function autoUpdateReadings(payload) {
 }
 ```
 
-## Bước 3: Triển khai (Deploy)
+## Bước 3: Cấu hình Script Properties
+Trong giao diện Apps Script:
+1. Nhấn vào biểu tượng **Project Settings** (bánh răng) ở menu bên trái.
+2. Cuộn xuống phần **Script Properties** và nhấn **Add script property**.
+3. Thêm 3 thuộc tính (key) bắt buộc sau:
+   - `SUPABASE_URL` = (URL Supabase của bạn)
+   - `SUPABASE_SERVICE_KEY` = (Khóa service_role của Supabase — KHÔNG phải anon key)
+   - `SHEET_ID` = `1TOeLylAh5S3wdLGZRAl_mkK6OemzcVZm9wgywCiOQLI` (cho giai đoạn test)
+
+> **Ghi chú:** Khi chuyển sang production, bạn chỉ cần sửa giá trị property `SHEET_ID` thành `1RZCMXqFZEpoXLh75LrfsVh3GrrlgTpswxgoltr2cAcU`, không cần sửa code hay deploy lại, chỉ cần chạy lại Đồng bộ.
+
+## Bước 4: Triển khai (Deploy)
 1. Nhấn nút **Deploy** (Triển khai) ở góc trên bên phải.
 2. Chọn **New deployment** (Triển khai mới).
 3. Ở mục **Select type** (Chọn loại), nhấn vào biểu tượng bánh răng và chọn **Web app** (Ứng dụng web).
@@ -153,7 +164,7 @@ function autoUpdateReadings(payload) {
 6. Cấp quyền truy cập nếu được yêu cầu (Review permissions -> Chọn tài khoản -> Advanced -> Go to ... -> Allow).
 7. Copy đường link **Web app URL**.
 
-## Bước 4: Cập nhật biến môi trường
+## Bước 5: Cập nhật biến môi trường
 Mở file `.env.example` trong dự án này, copy nội dung sang file `.env` (nếu có) hoặc cập nhật trực tiếp vào biến môi trường của ứng dụng, thêm dòng sau:
 ```
 VITE_GAS_URL="DÁN_URL_WEB_APP_CỦA_BẠN_VÀO_ĐÂY"

@@ -17,7 +17,12 @@ interface AdminManagementProps {
 export default function AdminManagement({ currentUser, onRefreshCustomers, onUpdateLocalCustomer, customers, onSync, syncing, lastSyncTime }: AdminManagementProps) {
   const [inputList, setInputList] = useState('');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<{
+    success: boolean;
+    message: string;
+    skippedExisting?: string[];
+    notFound?: string[];
+  } | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [maKhangListToUpdate, setMaKhangListToUpdate] = useState<string[]>([]);
 
@@ -96,20 +101,29 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
 
     try {
       const thoiGian = new Date().toLocaleString('vi-VN');
-      const updatedCount = await autoUpdateReadings(maKhangListToUpdate, currentUser.HO_TEN, thoiGian);
+      const res = await autoUpdateReadings(maKhangListToUpdate, currentUser.HO_TEN, thoiGian);
       
-      setResult({ 
-        success: true, 
-        message: `Đã cập nhật thành công ${updatedCount} / ${maKhangListToUpdate.length} khách hàng.` 
+      let msg = `Đã ghi tự động ${res.filled} mã.`;
+      if (res.skippedExisting.length > 0)
+        msg += ` Giữ nguyên ${res.skippedExisting.length} mã đã có chỉ số (không ghi đè).`;
+      if (res.notFound.length > 0)
+        msg += ` ${res.notFound.length} mã không tìm thấy.`;
+
+      setResult({
+        success: true,
+        message: msg,
+        skippedExisting: res.skippedExisting,
+        notFound: res.notFound,
       });
       setInputList('');
 
+      // Cập nhật cache local CHỈ cho mã thực sự được ghi
       if (onUpdateLocalCustomer) {
-        maKhangListToUpdate.forEach(maKhang => {
+        res.filledMaKhang.forEach(maKhang => {
           onUpdateLocalCustomer(maKhang, {
             CHI_SO: 'Ghi tự động',
             USER: currentUser.HO_TEN,
-            THOIGIAN_GHI: thoiGian
+            THOIGIAN_GHI: thoiGian,
           });
         });
       } else {
@@ -174,15 +188,36 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
         </div>
 
         {result && (
-          <div className={`mb-4 p-4 rounded-md flex items-start ${result.success ? 'bg-green-50' : 'bg-red-50'}`}>
-            {result.success ? (
-              <CheckCircle className="h-5 w-5 text-green-400 mt-0.5 mr-2" />
-            ) : (
-              <AlertCircle className="h-5 w-5 text-red-400 mt-0.5 mr-2" />
+          <div className={`mb-4 p-4 rounded-md flex flex-col items-start ${result.success ? 'bg-green-50' : 'bg-red-50'}`}>
+            <div className="flex items-start">
+              {result.success ? (
+                <CheckCircle className="h-5 w-5 text-green-400 mt-0.5 mr-2" />
+              ) : (
+                <AlertCircle className="h-5 w-5 text-red-400 mt-0.5 mr-2" />
+              )}
+              <p className={`text-sm ${result.success ? 'text-green-800' : 'text-red-800'}`}>
+                {result.message}
+              </p>
+            </div>
+            
+            {result?.skippedExisting && result.skippedExisting.length > 0 && (
+              <div className="mt-2 text-sm w-full">
+                <p className="font-medium text-amber-700">
+                  {result.skippedExisting.length} mã đã có chỉ số — giữ nguyên:
+                </p>
+                <div className="mt-1 max-h-32 overflow-y-auto rounded bg-amber-50 p-2 font-mono text-xs text-amber-800">
+                  {result.skippedExisting.join(', ')}
+                </div>
+              </div>
             )}
-            <p className={`text-sm ${result.success ? 'text-green-800' : 'text-red-800'}`}>
-              {result.message}
-            </p>
+            {result?.notFound && result.notFound.length > 0 && (
+              <div className="mt-2 text-sm w-full">
+                <p className="font-medium text-red-700">{result.notFound.length} mã không tìm thấy:</p>
+                <div className="mt-1 max-h-24 overflow-y-auto rounded bg-red-50 p-2 font-mono text-xs text-red-800">
+                  {result.notFound.join(', ')}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

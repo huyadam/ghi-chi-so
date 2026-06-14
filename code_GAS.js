@@ -3,7 +3,27 @@
 // Hybrid: Google Sheet (nhập liệu) + Supabase (đọc/ghi nhanh)
 // ============================================================
 
-const SHEET_ID = '1RZCMXqFZEpoXLh75LrfsVh3GrrlgTpswxgoltr2cAcU';
+// ===== CẤU HÌNH NGUỒN & QUYỀN SỞ HỮU CỘT =====
+// SHEET_ID đọc từ Script Properties (key 'SHEET_ID'); nếu chưa set thì dùng default.
+// Đổi Sheet test(2) -> production(1): chỉ cần sửa Script Property, KHÔNG sửa code.
+const DEFAULT_SHEET_ID = '1TOeLylAh5S3wdLGZRAl_mkK6OemzcVZm9wgywCiOQLI'; // Sheet 2 (test) — nguồn hiện tại
+// Sheet 1 (production) khi ổn định: '1RZCMXqFZEpoXLh75LrfsVh3GrrlgTpswxgoltr2cAcU'
+
+function getSheetId_() {
+  return PropertiesService.getScriptProperties().getProperty('SHEET_ID') || DEFAULT_SHEET_ID;
+}
+
+// Cột do WEB APP sở hữu — GAS sync KHÔNG BAO GIỜ đè (Supabase là gốc cho chỉ số).
+const PRESERVE_COLUMNS = ['USER', 'CHI_SO', 'THOIGIAN_GHI', 'GHI_CHU'];
+
+// Toạ độ: true = cho Sheet đẩy LAT/LONG lên (nạp toạ độ hàng loạt); false = web sở hữu, không đè.
+const SYNC_COORDINATES_FROM_SHEET = true;
+
+function getCustomerSkipColumns_() {
+  var skip = PRESERVE_COLUMNS.slice();
+  if (!SYNC_COORDINATES_FROM_SHEET) { skip.push('LATITUDE'); skip.push('LONGITUDE'); }
+  return skip;
+}
 
 // =================== MENU TÙY CHỈNH ===================
 
@@ -64,7 +84,7 @@ function supabaseRequest_(method, path, payload) {
 
 function syncCustomersToSupabase() {
   const ui = SpreadsheetApp.getUi();
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   if (!sheet) {
     ui.alert('Không tìm thấy sheet "Danh sach"!');
@@ -77,11 +97,14 @@ function syncCustomersToSupabase() {
   const BATCH_SIZE = 500;
   let totalUpserted = 0;
   let batch = [];
+  const SKIP = getCustomerSkipColumns_();
   
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
-      const header = headers[j];
+      const header = String(headers[j]).trim();
+      if (!header) continue;
+      if (SKIP.indexOf(header) !== -1) continue;
       let value = data[i][j];
       
       // Chuyển số thành chuỗi cho các trường text
@@ -126,7 +149,7 @@ function syncCustomersToSupabase() {
 
 function syncUsersToSupabase() {
   const ui = SpreadsheetApp.getUi();
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('User');
   if (!sheet) {
     ui.alert('Không tìm thấy sheet "User"!');
@@ -165,7 +188,7 @@ function syncUsersToSupabase() {
 
 function syncStationsToSupabase() {
   const ui = SpreadsheetApp.getUi();
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('TBA');
   if (!sheet) {
     ui.alert('Không tìm thấy sheet "TBA"!');
@@ -235,7 +258,7 @@ function syncAll() {
 
 // Quiet versions (không hiện alert riêng)
 function syncUsersToSupabaseQuiet_() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('User');
   if (!sheet) return 0;
   
@@ -273,7 +296,7 @@ function syncUsersToSupabaseQuiet_() {
 }
 
 function syncStationsToSupabaseQuiet_() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('TBA');
   if (!sheet) return 0;
   
@@ -351,7 +374,7 @@ function syncStationsToSupabaseQuiet_() {
 }
 
 function syncCustomersToSupabaseQuiet_() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   if (!sheet) return 0;
   
@@ -360,12 +383,14 @@ function syncCustomersToSupabaseQuiet_() {
   const BATCH_SIZE = 500;
   let total = 0;
   let batch = [];
+  const SKIP = getCustomerSkipColumns_();
   
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
       const header = String(headers[j]).trim();
       if (!header) continue; // Bỏ qua cột header rỗng
+      if (SKIP.indexOf(header) !== -1) continue;
       let value = data[i][j];
       
       if (header === 'LONGITUDE' || header === 'LATITUDE' || header === 'CHISO_CU') {
@@ -491,7 +516,7 @@ function doPost(e) {
 // =================== GIỮ NGUYÊN CÁC HÀM CŨ ===================
 
 function getUsers() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('User');
   if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
@@ -509,7 +534,7 @@ function getUsers() {
 }
 
 function getCustomers() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
@@ -528,7 +553,7 @@ function getCustomers() {
 }
 
 function getStations() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('TBA');
   if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
@@ -547,7 +572,7 @@ function getStations() {
 
 function updateReading(payload) {
   const { rowIndex, chiSo, user, thoiGian, ghiChu, updateType, maKhang, bcs } = payload;
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   
   const data = sheet.getDataRange().getValues();
@@ -603,7 +628,7 @@ function updateReading(payload) {
 
 function autoUpdateReadings(payload) {
   const { maKhangList, user, thoiGian } = payload;
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
@@ -634,7 +659,7 @@ function autoUpdateReadings(payload) {
 
 function updateCoordinates(payload) {
   const { rowIndex, lat, lng, maKhang } = payload;
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   
   const data = sheet.getDataRange().getValues();
