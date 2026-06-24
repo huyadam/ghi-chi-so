@@ -14,6 +14,20 @@ interface UpdateReadingProps {
   onUpdateLocalCustomer?: (id: string | number, updates: Partial<Customer>) => void;
 }
 
+const MA_LOI_OPTIONS = [
+  { ma: 'MH', hienThi: 'MH-Lỗi màn hình' },
+  { ma: 'TH', hienThi: 'TH-Công tơ lỗi mất tín hiệu' },
+  { ma: 'HH', hienThi: 'HH-Công tơ bị hư hỏng' },
+  { ma: 'CH', hienThi: 'CH-Công tơ cháy' },
+  { ma: 'KD', hienThi: 'KD-Công tơ không sử dụng - Đề nghị thu hồi' },
+  { ma: 'AT', hienThi: 'AT-Công tơ treo mất an toàn' },
+  { ma: 'SG', hienThi: 'SG-Công tơ sai giờ' },
+  { ma: 'VN', hienThi: 'VN-Thường xuyên vắng nhà' },
+  { ma: 'KC', hienThi: 'KC-Không tìm thấy công tơ' },
+  { ma: 'KT', hienThi: 'KT-Công tơ khác trạm' },
+  { ma: 'Khác', hienThi: 'Khác' },
+];
+
 export default function UpdateReading({ currentUser, allUsers, customers, stations, loadingCustomers, onRefreshCustomers, onUpdateLocalCustomer }: UpdateReadingProps) {
   const hasReading = (val: any) => val !== '' && val !== null && val !== undefined;
   const isAdmin = currentUser.ROLE.toLowerCase().includes('admin');
@@ -40,6 +54,7 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [chiSoInput, setChiSoInput] = useState('');
   const [ghiChuInput, setGhiChuInput] = useState('');
+  const [maLoiInput, setMaLoiInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [savingType, setSavingType] = useState<'FULL' | 'NOTE_ONLY' | 'DELETE_READING' | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -54,6 +69,11 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
   const [employeeSearch, setEmployeeSearch] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // Mã lỗi dropdown state
+  const [isMaLoiDropdownOpen, setIsMaLoiDropdownOpen] = useState(false);
+  const [maLoiSearch, setMaLoiSearch] = useState('');
+  const maLoiDropdownRef = useRef<HTMLDivElement>(null);
+
   // Quản lý phân công modal state
   const [showAssignmentManager, setShowAssignmentManager] = useState(false);
   const [assignmentSearch, setAssignmentSearch] = useState('');
@@ -62,6 +82,9 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsDropdownOpen(false);
+      }
+      if (maLoiDropdownRef.current && !maLoiDropdownRef.current.contains(event.target as Node)) {
+        setIsMaLoiDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -257,16 +280,25 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
              setSelectedCustomer(nextCust);
              setChiSoInput(nextCust.CHI_SO && nextCust.CHI_SO !== 'Ghi tự động' ? nextCust.CHI_SO : '');
              setGhiChuInput(nextCust.GHI_CHU || '');
+             setMaLoiInput('');
+    setMaLoiSearch('');
+    setIsMaLoiDropdownOpen(false);
           } else {
              setSelectedCustomer(null);
              setChiSoInput('');
              setGhiChuInput('');
+             setMaLoiInput('');
+    setMaLoiSearch('');
+    setIsMaLoiDropdownOpen(false);
           }
         } else {
           // If DELETE, close modal immediately
           setSelectedCustomer(null);
           setChiSoInput('');
           setGhiChuInput('');
+          setMaLoiInput('');
+    setMaLoiSearch('');
+    setIsMaLoiDropdownOpen(false);
         }
       } else {
         alert('Lưu thất bại');
@@ -283,6 +315,9 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
     setSelectedCustomer(customer);
     setChiSoInput(customer.CHI_SO && customer.CHI_SO !== 'Ghi tự động' ? customer.CHI_SO : '');
     setGhiChuInput(customer.GHI_CHU || '');
+    setMaLoiInput('');
+    setMaLoiSearch('');
+    setIsMaLoiDropdownOpen(false);
   };
 
   const currentIndex = selectedCustomer ? currentList.findIndex(c => c.id === selectedCustomer.id) : -1;
@@ -295,6 +330,9 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
       setSelectedCustomer(prevCust);
       setChiSoInput(prevCust.CHI_SO && prevCust.CHI_SO !== 'Ghi tự động' ? prevCust.CHI_SO : '');
       setGhiChuInput(prevCust.GHI_CHU || '');
+      setMaLoiInput('');
+    setMaLoiSearch('');
+    setIsMaLoiDropdownOpen(false);
     }
   };
 
@@ -304,6 +342,9 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
       setSelectedCustomer(nextCust);
       setChiSoInput(nextCust.CHI_SO && nextCust.CHI_SO !== 'Ghi tự động' ? nextCust.CHI_SO : '');
       setGhiChuInput(nextCust.GHI_CHU || '');
+      setMaLoiInput('');
+    setMaLoiSearch('');
+    setIsMaLoiDropdownOpen(false);
     }
   };
 
@@ -1073,6 +1114,83 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                               {warningMessage}
                             </div>
                           )}
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Mã lỗi đo xa
+                          </label>
+                          <div className="relative" ref={maLoiDropdownRef}>
+                            <div
+                              className="border border-gray-300 rounded-lg shadow-sm px-3 py-2.5 bg-white cursor-pointer flex justify-between items-center"
+                              onClick={() => { setIsMaLoiDropdownOpen(v => !v); setMaLoiSearch(''); }}
+                            >
+                              <span className={cn("text-sm truncate", maLoiInput ? "text-gray-900 font-medium" : "text-gray-400")}>
+                                {maLoiInput ? MA_LOI_OPTIONS.find(o => o.ma === maLoiInput)?.hienThi : '-- Không có lỗi --'}
+                              </span>
+                              <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                                {maLoiInput && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMaLoiInput('');
+                                      setMaLoiSearch('');
+                                      setIsMaLoiDropdownOpen(false);
+                                      setGhiChuInput('');
+                                    }}
+                                    className="text-gray-400 hover:text-gray-600"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                                <ChevronDown className="h-4 w-4 text-gray-400" />
+                              </div>
+                            </div>
+                            {isMaLoiDropdownOpen && (
+                              <div className="absolute left-0 right-0 z-20 mt-1 bg-white shadow-lg rounded-lg py-1 ring-1 ring-black ring-opacity-5 overflow-hidden">
+                                <div className="px-2 py-2 sticky top-0 bg-white border-b border-gray-100">
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    className="w-full border border-gray-300 rounded-md text-sm px-3 py-1.5 focus:ring-blue-500 focus:border-blue-500"
+                                    placeholder="Tìm mã lỗi..."
+                                    value={maLoiSearch}
+                                    onChange={(e) => setMaLoiSearch(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </div>
+                                <div className="max-h-48 overflow-y-auto">
+                                  <div
+                                    className="cursor-pointer py-2 px-3 text-sm text-gray-500 hover:bg-gray-50"
+                                    onClick={() => {
+                                      setMaLoiInput('');
+                                      setGhiChuInput('');
+                                      setIsMaLoiDropdownOpen(false);
+                                      setMaLoiSearch('');
+                                    }}
+                                  >
+                                    -- Không có lỗi --
+                                  </div>
+                                  {MA_LOI_OPTIONS.filter(o =>
+                                    !maLoiSearch || o.hienThi.toLowerCase().includes(maLoiSearch.toLowerCase()) || o.ma.toLowerCase().includes(maLoiSearch.toLowerCase())
+                                  ).map(opt => (
+                                    <div
+                                      key={opt.ma}
+                                      className={cn("cursor-pointer py-2 px-3 text-sm hover:bg-blue-50", maLoiInput === opt.ma ? "bg-blue-50 font-medium text-blue-700" : "text-gray-900")}
+                                      onClick={() => {
+                                        setMaLoiInput(opt.ma);
+                                        setGhiChuInput(opt.hienThi);
+                                        setIsMaLoiDropdownOpen(false);
+                                        setMaLoiSearch('');
+                                      }}
+                                    >
+                                      {opt.hienThi}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <div>
                           <label htmlFor="ghichu" className="block text-sm font-medium text-gray-700 mb-1">
