@@ -14,6 +14,28 @@ interface UpdateReadingProps {
   onUpdateLocalCustomer?: (id: string | number, updates: Partial<Customer>) => void;
 }
 
+const MA_LOI_SEPARATOR = ' | ';
+
+// Ghép mã lỗi + ghi chú thành 1 chuỗi lưu DB
+function buildGhiChu(maLoi: string, note: string): string {
+  const hienThi = MA_LOI_OPTIONS.find(o => o.ma === maLoi)?.hienThi ?? '';
+  if (hienThi && note.trim()) return `${hienThi}${MA_LOI_SEPARATOR}${note.trim()}`;
+  if (hienThi) return hienThi;
+  return note.trim();
+}
+
+// Tách chuỗi từ DB thành { maLoi, note }
+function parseGhiChu(ghiChu: string): { maLoi: string; note: string } {
+  if (!ghiChu) return { maLoi: '', note: '' };
+  for (const opt of MA_LOI_OPTIONS) {
+    if (ghiChu === opt.hienThi) return { maLoi: opt.ma, note: '' };
+    if (ghiChu.startsWith(opt.hienThi + MA_LOI_SEPARATOR)) {
+      return { maLoi: opt.ma, note: ghiChu.slice(opt.hienThi.length + MA_LOI_SEPARATOR.length) };
+    }
+  }
+  return { maLoi: '', note: ghiChu };
+}
+
 const MA_LOI_OPTIONS = [
   { ma: 'MH', hienThi: 'MH-Lỗi màn hình' },
   { ma: 'TH', hienThi: 'TH-Công tơ lỗi mất tín hiệu' },
@@ -234,8 +256,8 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
           shouldRequireNote = true;
         }
         
-        if (shouldRequireNote && !ghiChuInput.trim()) {
-          alert('Cảnh báo: Sản lượng bất thường (âm hoặc tăng >100% so với SL Tháng -3)! Bạn bắt buộc phải nhập ghi chú rõ ràng.');
+        if (shouldRequireNote && !buildGhiChu(maLoiInput, ghiChuInput)) {
+          alert('Cảnh báo: Sản lượng bất thường (âm hoặc tăng >100% so với SL Tháng -3)! Bạn bắt buộc phải chọn mã lỗi hoặc nhập ghi chú rõ ràng.');
           return;
         }
       }
@@ -250,37 +272,39 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
     setSavingType(updateType);
     try {
       const thoiGian = new Date().toLocaleString('vi-VN');
+      const ghiChuSave = buildGhiChu(maLoiInput, ghiChuInput);
       const success = await updateReading(
         selectedCustomer.MA_KHANG,
         selectedCustomer.BCS,
         chiSoInput,
         currentUser.HO_TEN,
         thoiGian,
-        ghiChuInput,
+        ghiChuSave,
         updateType
       );
       if (success) {
         const currentIndex = currentList.findIndex((c) => c.id === selectedCustomer.id);
-        
+
         if (onUpdateLocalCustomer) {
           if (updateType === 'DELETE_READING') {
-            onUpdateLocalCustomer(selectedCustomer.id, { CHI_SO: "", USER: "", THOIGIAN_GHI: "", GHI_CHU: ghiChuInput });
+            onUpdateLocalCustomer(selectedCustomer.id, { CHI_SO: "", USER: "", THOIGIAN_GHI: "", GHI_CHU: ghiChuSave });
           } else if (updateType === 'NOTE_ONLY') {
-            onUpdateLocalCustomer(selectedCustomer.id, { GHI_CHU: ghiChuInput });
+            onUpdateLocalCustomer(selectedCustomer.id, { GHI_CHU: ghiChuSave });
           } else {
-            onUpdateLocalCustomer(selectedCustomer.id, { CHI_SO: chiSoInput, USER: currentUser.HO_TEN, THOIGIAN_GHI: thoiGian, GHI_CHU: ghiChuInput });
+            onUpdateLocalCustomer(selectedCustomer.id, { CHI_SO: chiSoInput, USER: currentUser.HO_TEN, THOIGIAN_GHI: thoiGian, GHI_CHU: ghiChuSave });
           }
         } else {
           onRefreshCustomers();
         }
-        
+
         if (updateType === 'FULL' || updateType === 'NOTE_ONLY') {
           if (currentIndex !== -1 && currentIndex < currentList.length - 1) {
              const nextCust = currentList[currentIndex + 1];
+             const { maLoi: nextMaLoi, note: nextNote } = parseGhiChu(nextCust.GHI_CHU || '');
              setSelectedCustomer(nextCust);
              setChiSoInput(nextCust.CHI_SO && nextCust.CHI_SO !== 'Ghi tự động' ? nextCust.CHI_SO : '');
-             setGhiChuInput(nextCust.GHI_CHU || '');
-             setMaLoiInput('');
+             setGhiChuInput(nextNote);
+             setMaLoiInput(nextMaLoi);
     setMaLoiSearch('');
     setIsMaLoiDropdownOpen(false);
           } else {
@@ -312,10 +336,11 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
   };
 
   const openModal = (customer: Customer) => {
+    const { maLoi, note } = parseGhiChu(customer.GHI_CHU || '');
     setSelectedCustomer(customer);
     setChiSoInput(customer.CHI_SO && customer.CHI_SO !== 'Ghi tự động' ? customer.CHI_SO : '');
-    setGhiChuInput(customer.GHI_CHU || '');
-    setMaLoiInput('');
+    setGhiChuInput(note);
+    setMaLoiInput(maLoi);
     setMaLoiSearch('');
     setIsMaLoiDropdownOpen(false);
   };
@@ -327,10 +352,11 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
   const handlePrev = () => {
     if (hasPrev) {
       const prevCust = currentList[currentIndex - 1];
+      const { maLoi, note } = parseGhiChu(prevCust.GHI_CHU || '');
       setSelectedCustomer(prevCust);
       setChiSoInput(prevCust.CHI_SO && prevCust.CHI_SO !== 'Ghi tự động' ? prevCust.CHI_SO : '');
-      setGhiChuInput(prevCust.GHI_CHU || '');
-      setMaLoiInput('');
+      setGhiChuInput(note);
+      setMaLoiInput(maLoi);
     setMaLoiSearch('');
     setIsMaLoiDropdownOpen(false);
     }
@@ -339,10 +365,11 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
   const handleNext = () => {
     if (hasNext) {
       const nextCust = currentList[currentIndex + 1];
+      const { maLoi, note } = parseGhiChu(nextCust.GHI_CHU || '');
       setSelectedCustomer(nextCust);
       setChiSoInput(nextCust.CHI_SO && nextCust.CHI_SO !== 'Ghi tự động' ? nextCust.CHI_SO : '');
-      setGhiChuInput(nextCust.GHI_CHU || '');
-      setMaLoiInput('');
+      setGhiChuInput(note);
+      setMaLoiInput(maLoi);
     setMaLoiSearch('');
     setIsMaLoiDropdownOpen(false);
     }
@@ -1136,7 +1163,6 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                                       setMaLoiInput('');
                                       setMaLoiSearch('');
                                       setIsMaLoiDropdownOpen(false);
-                                      setGhiChuInput('');
                                     }}
                                     className="text-gray-400 hover:text-gray-600"
                                   >
@@ -1164,7 +1190,6 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                                     className="cursor-pointer py-2 px-3 text-sm text-gray-500 hover:bg-gray-50"
                                     onClick={() => {
                                       setMaLoiInput('');
-                                      setGhiChuInput('');
                                       setIsMaLoiDropdownOpen(false);
                                       setMaLoiSearch('');
                                     }}
@@ -1179,7 +1204,6 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                                       className={cn("cursor-pointer py-2 px-3 text-sm hover:bg-blue-50", maLoiInput === opt.ma ? "bg-blue-50 font-medium text-blue-700" : "text-gray-900")}
                                       onClick={() => {
                                         setMaLoiInput(opt.ma);
-                                        setGhiChuInput(opt.hienThi);
                                         setIsMaLoiDropdownOpen(false);
                                         setMaLoiSearch('');
                                       }}
