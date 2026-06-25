@@ -232,7 +232,7 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
       'Chỉ số cũ', 'Chỉ số mới',
       'SL tháng -1', 'SL tháng -2', 'SL tháng -3',
       'Người ghi', 'Thời gian ghi',
-      'Mã lỗi', 'Ghi chú',
+      'Mã lỗi đo xa', 'Ghi chú',
       'Điện thoại',
     ];
     const csv = [header, ...rows]

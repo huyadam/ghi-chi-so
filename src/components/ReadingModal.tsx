@@ -420,7 +420,7 @@ export default function ReadingModal({
                   )}
                 </div>
 
-                {/* Mã lỗi */}
+                {/* Mã lỗi đo xa */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Mã lỗi đo xa</label>
                   <div className="relative" ref={maLoiDropdownRef}>
