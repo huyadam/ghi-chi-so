@@ -132,11 +132,8 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
     { id: 'update', name: 'Ghi chỉ số', icon: Edit3 },
     { id: 'overview', name: 'Tổng quan', icon: LayoutDashboard },
     { id: 'station', name: 'Quản lý kết nối trạm', icon: WifiOff },
+    ...(isAdmin ? [{ id: 'admin', name: 'Quản lý chỉ số', icon: Settings }] : []),
   ];
-
-  if (isAdmin) {
-    tabs.push({ id: 'admin', name: 'Quản lý chỉ số', icon: Settings });
-  }
 
   // Calculate progress
   const totalAssigned = customers.length;

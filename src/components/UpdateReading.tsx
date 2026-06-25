@@ -1,8 +1,34 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Customer, User, Station } from '../types';
-import { updateReading, updateCoordinates } from '../lib/api';
-import { Search, Loader2, CheckCircle, XCircle, ChevronDown, Download, Send, RefreshCw, Edit3, LayoutDashboard, MapPin, Zap, X, ChevronLeft, ChevronRight, Navigation, AlertTriangle } from 'lucide-react';
+import { Search, Loader2, CheckCircle, ChevronDown, Download, RefreshCw, Edit3, LayoutDashboard, MapPin, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { parseGhiChu } from '../lib/ghiChu';
+import ReadingModal from './ReadingModal';
+
+type ToastType = 'success' | 'error' | 'warning';
+interface Toast { id: number; message: string; type: ToastType; }
+
+function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+      {toasts.map(t => (
+        <div key={t.id} className={cn(
+          "flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium max-w-xs pointer-events-auto animate-in slide-in-from-top-2 duration-200",
+          t.type === 'success' && "bg-green-600 text-white",
+          t.type === 'error'   && "bg-red-600 text-white",
+          t.type === 'warning' && "bg-orange-500 text-white",
+        )}>
+          <span className="flex-1">{t.message}</span>
+          <button onClick={() => onDismiss(t.id)} className="opacity-70 hover:opacity-100 flex-shrink-0 mt-0.5">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+let _toastId = 0;
 
 interface UpdateReadingProps {
   currentUser: User;
@@ -14,41 +40,6 @@ interface UpdateReadingProps {
   onUpdateLocalCustomer?: (id: string | number, updates: Partial<Customer>) => void;
 }
 
-const MA_LOI_SEPARATOR = ' | ';
-
-// Ghép mã lỗi + ghi chú thành 1 chuỗi lưu DB
-function buildGhiChu(maLoi: string, note: string): string {
-  const hienThi = MA_LOI_OPTIONS.find(o => o.ma === maLoi)?.hienThi ?? '';
-  if (hienThi && note.trim()) return `${hienThi}${MA_LOI_SEPARATOR}${note.trim()}`;
-  if (hienThi) return hienThi;
-  return note.trim();
-}
-
-// Tách chuỗi từ DB thành { maLoi, note }
-function parseGhiChu(ghiChu: string): { maLoi: string; note: string } {
-  if (!ghiChu) return { maLoi: '', note: '' };
-  for (const opt of MA_LOI_OPTIONS) {
-    if (ghiChu === opt.hienThi) return { maLoi: opt.ma, note: '' };
-    if (ghiChu.startsWith(opt.hienThi + MA_LOI_SEPARATOR)) {
-      return { maLoi: opt.ma, note: ghiChu.slice(opt.hienThi.length + MA_LOI_SEPARATOR.length) };
-    }
-  }
-  return { maLoi: '', note: ghiChu };
-}
-
-const MA_LOI_OPTIONS = [
-  { ma: 'MH', hienThi: 'MH-Lỗi màn hình' },
-  { ma: 'TH', hienThi: 'TH-Công tơ lỗi mất tín hiệu' },
-  { ma: 'HH', hienThi: 'HH-Công tơ bị hư hỏng' },
-  { ma: 'CH', hienThi: 'CH-Công tơ cháy' },
-  { ma: 'KD', hienThi: 'KD-Công tơ không sử dụng - Đề nghị thu hồi' },
-  { ma: 'AT', hienThi: 'AT-Công tơ treo mất an toàn' },
-  { ma: 'SG', hienThi: 'SG-Công tơ sai giờ' },
-  { ma: 'VN', hienThi: 'VN-Thường xuyên vắng nhà' },
-  { ma: 'KC', hienThi: 'KC-Không tìm thấy công tơ' },
-  { ma: 'KT', hienThi: 'KT-Công tơ khác trạm' },
-  { ma: 'Khác', hienThi: 'Khác' },
-];
 
 export default function UpdateReading({ currentUser, allUsers, customers, stations, loadingCustomers, onRefreshCustomers, onUpdateLocalCustomer }: UpdateReadingProps) {
   const hasReading = (val: any) => val !== '' && val !== null && val !== undefined;
@@ -72,29 +63,22 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
   // Tự đăng ký state
   const [activeSearchQuery, setActiveSearchQuery] = useState('');
 
+  // Toast state
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const showToast = useCallback((message: string, type: ToastType = 'success') => {
+    const id = ++_toastId;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }, []);
+  const dismissToast = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), []);
+
   // Modal state
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [chiSoInput, setChiSoInput] = useState('');
-  const [ghiChuInput, setGhiChuInput] = useState('');
-  const [maLoiInput, setMaLoiInput] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [savingType, setSavingType] = useState<'FULL' | 'NOTE_ONLY' | 'DELETE_READING' | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showZeroConfirm, setShowZeroConfirm] = useState(false);
-  const [updatingLocation, setUpdatingLocation] = useState(false);
-  const [showLocationModal, setShowLocationModal] = useState(false);
-  const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
-  const [locationError, setLocationError] = useState<string | null>(null);
 
-  // Custom Dropdown state
+  // Employee Dropdown state
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [employeeSearch, setEmployeeSearch] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Mã lỗi dropdown state
-  const [isMaLoiDropdownOpen, setIsMaLoiDropdownOpen] = useState(false);
-  const [maLoiSearch, setMaLoiSearch] = useState('');
-  const maLoiDropdownRef = useRef<HTMLDivElement>(null);
 
   // Quản lý phân công modal state
   const [showAssignmentManager, setShowAssignmentManager] = useState(false);
@@ -104,9 +88,6 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsDropdownOpen(false);
-      }
-      if (maLoiDropdownRef.current && !maLoiDropdownRef.current.contains(event.target as Node)) {
-        setIsMaLoiDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -232,239 +213,45 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
 
   const currentList = activeTab === 'phan_cong' ? assignedCustomers : activeCustomers;
 
-  const handleSaveReading = async (updateType: 'FULL' | 'NOTE_ONLY' | 'DELETE_READING' = 'FULL', skipZeroCheck = false) => {
-    if (!selectedCustomer) return;
-    
-    if (updateType === 'FULL') {
-      if (!chiSoInput.trim()) {
-        alert('Vui lòng nhập chỉ số');
-        return;
-      }
-      
-      const hsNhan = Number(selectedCustomer.HS_NHAN) || 1;
-      const oldReading = Number(selectedCustomer.CHISO_CU);
-      const newReading = Number(chiSoInput);
-      
-      if (!isNaN(oldReading) && !isNaN(newReading)) {
-        const consumption = (newReading - oldReading) * hsNhan;
-        const thresh = Number(selectedCustomer.SLUONG_3);
-        
-        let shouldRequireNote = false;
-        if (consumption < 0) {
-          shouldRequireNote = true;
-        } else if (!isNaN(thresh) && thresh > 0 && consumption > 2 * thresh) {
-          shouldRequireNote = true;
-        }
-        
-        if (shouldRequireNote && !buildGhiChu(maLoiInput, ghiChuInput)) {
-          alert('Cảnh báo: Sản lượng bất thường (âm hoặc tăng >100% so với SL Tháng -3)! Bạn bắt buộc phải chọn mã lỗi hoặc nhập ghi chú rõ ràng.');
-          return;
-        }
-      }
-
-      if (chiSoInput.trim() === '0' && !skipZeroCheck) {
-        setShowZeroConfirm(true);
-        return;
-      }
-    }
-
-    setSaving(true);
-    setSavingType(updateType);
-    try {
-      const thoiGian = new Date().toLocaleString('vi-VN');
-      const ghiChuSave = buildGhiChu(maLoiInput, ghiChuInput);
-      const success = await updateReading(
-        selectedCustomer.MA_KHANG,
-        selectedCustomer.BCS,
-        chiSoInput,
-        currentUser.HO_TEN,
-        thoiGian,
-        ghiChuSave,
-        updateType
-      );
-      if (success) {
-        const currentIndex = currentList.findIndex((c) => c.id === selectedCustomer.id);
-
-        if (onUpdateLocalCustomer) {
-          if (updateType === 'DELETE_READING') {
-            onUpdateLocalCustomer(selectedCustomer.id, { CHI_SO: "", USER: "", THOIGIAN_GHI: "", GHI_CHU: ghiChuSave });
-          } else if (updateType === 'NOTE_ONLY') {
-            onUpdateLocalCustomer(selectedCustomer.id, { GHI_CHU: ghiChuSave });
-          } else {
-            onUpdateLocalCustomer(selectedCustomer.id, { CHI_SO: chiSoInput, USER: currentUser.HO_TEN, THOIGIAN_GHI: thoiGian, GHI_CHU: ghiChuSave });
-          }
-        } else {
-          onRefreshCustomers();
-        }
-
-        if (updateType === 'FULL' || updateType === 'NOTE_ONLY') {
-          if (currentIndex !== -1 && currentIndex < currentList.length - 1) {
-             const nextCust = currentList[currentIndex + 1];
-             const { maLoi: nextMaLoi, note: nextNote } = parseGhiChu(nextCust.GHI_CHU || '');
-             setSelectedCustomer(nextCust);
-             setChiSoInput(nextCust.CHI_SO && nextCust.CHI_SO !== 'Ghi tự động' ? nextCust.CHI_SO : '');
-             setGhiChuInput(nextNote);
-             setMaLoiInput(nextMaLoi);
-    setMaLoiSearch('');
-    setIsMaLoiDropdownOpen(false);
-          } else {
-             setSelectedCustomer(null);
-             setChiSoInput('');
-             setGhiChuInput('');
-             setMaLoiInput('');
-    setMaLoiSearch('');
-    setIsMaLoiDropdownOpen(false);
-          }
-        } else {
-          // If DELETE, close modal immediately
-          setSelectedCustomer(null);
-          setChiSoInput('');
-          setGhiChuInput('');
-          setMaLoiInput('');
-    setMaLoiSearch('');
-    setIsMaLoiDropdownOpen(false);
-        }
-      } else {
-        alert('Lưu thất bại');
-      }
-    } catch (err) {
-      alert('Có lỗi xảy ra khi lưu');
-    } finally {
-      setSaving(false);
-      setSavingType(null);
-    }
+  const exportCSV = () => {
+    const rows = assignedCustomers.map(c => {
+      const { maLoi, note } = parseGhiChu(c.GHI_CHU || '');
+      return [
+        c.MA_KHANG, c.TEN_KHANG, c.DIA_CHI, c.SO_CTO,
+        c.MA_TRAM, c.MA_GHI_CHU || '', c.MA_SOGCS || '', c.BCS || '',
+        c.CHISO_CU ?? '', c.CHI_SO ?? '',
+        c.SLUONG_1 ?? '', c.SLUONG_2 ?? '', c.SLUONG_3 ?? '',
+        c.USER || '', c.THOIGIAN_GHI || '',
+        maLoi, note,
+        c.DTHOAI || '',
+      ];
+    });
+    const header = [
+      'Mã KH', 'Tên KH', 'Địa chỉ', 'Số CT',
+      'Mã trạm', 'Mã GC', 'Sổ GCS', 'BCS',
+      'Chỉ số cũ', 'Chỉ số mới',
+      'SL tháng -1', 'SL tháng -2', 'SL tháng -3',
+      'Người ghi', 'Thời gian ghi',
+      'Mã lỗi', 'Ghi chú',
+      'Điện thoại',
+    ];
+    const csv = [header, ...rows]
+      .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ghi-chi-so_${selectedEmployee.replace(/\s+/g, '_')}_${new Date().toLocaleDateString('vi-VN').replace(/\//g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const openModal = (customer: Customer) => {
-    const { maLoi, note } = parseGhiChu(customer.GHI_CHU || '');
-    setSelectedCustomer(customer);
-    setChiSoInput(customer.CHI_SO && customer.CHI_SO !== 'Ghi tự động' ? customer.CHI_SO : '');
-    setGhiChuInput(note);
-    setMaLoiInput(maLoi);
-    setMaLoiSearch('');
-    setIsMaLoiDropdownOpen(false);
-  };
-
-  const currentIndex = selectedCustomer ? currentList.findIndex(c => c.id === selectedCustomer.id) : -1;
-  const hasPrev = currentIndex > 0;
-  const hasNext = currentIndex !== -1 && currentIndex < currentList.length - 1;
-
-  const handlePrev = () => {
-    if (hasPrev) {
-      const prevCust = currentList[currentIndex - 1];
-      const { maLoi, note } = parseGhiChu(prevCust.GHI_CHU || '');
-      setSelectedCustomer(prevCust);
-      setChiSoInput(prevCust.CHI_SO && prevCust.CHI_SO !== 'Ghi tự động' ? prevCust.CHI_SO : '');
-      setGhiChuInput(note);
-      setMaLoiInput(maLoi);
-    setMaLoiSearch('');
-    setIsMaLoiDropdownOpen(false);
-    }
-  };
-
-  const handleNext = () => {
-    if (hasNext) {
-      const nextCust = currentList[currentIndex + 1];
-      const { maLoi, note } = parseGhiChu(nextCust.GHI_CHU || '');
-      setSelectedCustomer(nextCust);
-      setChiSoInput(nextCust.CHI_SO && nextCust.CHI_SO !== 'Ghi tự động' ? nextCust.CHI_SO : '');
-      setGhiChuInput(note);
-      setMaLoiInput(maLoi);
-    setMaLoiSearch('');
-    setIsMaLoiDropdownOpen(false);
-    }
-  };
-
-  const openLocationModal = () => {
-    setCurrentLocation(null);
-    setLocationError(null);
-    setShowLocationModal(true);
-    fetchCurrentLocation();
-  };
-
-  const fetchCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError('Trình duyệt của bạn không hỗ trợ định vị.');
-      return;
-    }
-
-    setUpdatingLocation(true);
-    setLocationError(null);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCurrentLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        });
-        setUpdatingLocation(false);
-      },
-      (error) => {
-        setLocationError('Không thể lấy được vị trí: ' + error.message);
-        setUpdatingLocation(false);
-      },
-      { enableHighAccuracy: true }
-    );
-  };
-
-  const handleConfirmLocation = async () => {
-    if (!currentLocation || !selectedCustomer) return;
-    setUpdatingLocation(true);
-    try {
-      const success = await updateCoordinates(selectedCustomer.MA_KHANG, currentLocation.lat, currentLocation.lng);
-      if (success) {
-        alert('Cập nhật vị trí thành công!');
-        if (onUpdateLocalCustomer) {
-          onUpdateLocalCustomer(selectedCustomer.id, { LATITUDE: currentLocation.lat, LONGITUDE: currentLocation.lng });
-        }
-        setSelectedCustomer(prev => prev ? { ...prev, LATITUDE: currentLocation.lat, LONGITUDE: currentLocation.lng } : null);
-        setShowLocationModal(false);
-      } else {
-        alert('Cập nhật vị trí thất bại.');
-      }
-    } catch (error) {
-      alert('Có lỗi xảy ra khi cập nhật.');
-    } finally {
-      setUpdatingLocation(false);
-    }
-  };
-
-  // Warning for consumption
-  let warningMessage = null;
-  let warningType = 'info';
-  if (selectedCustomer && chiSoInput) {
-    const hsNhan = Number(selectedCustomer.HS_NHAN) || 1;
-    const oldReading = Number(selectedCustomer.CHISO_CU);
-    const newReading = Number(chiSoInput);
-    if (!isNaN(oldReading) && !isNaN(newReading)) {
-      const consumption = (newReading - oldReading) * hsNhan;
-      const compareMonth = Number(selectedCustomer.SLUONG_3);
-      
-      if (consumption < 0) {
-        warningMessage = `CẢNH BÁO LỖI: Chỉ số mới nhỏ hơn chỉ số cũ! (Sản lượng: ${consumption}). Bắt buộc nhập ghi chú!`;
-        warningType = 'error';
-      } else if (!isNaN(compareMonth) && compareMonth > 0) {
-        if (consumption > compareMonth * 2) {
-          warningMessage = `CẢNH BÁO LỖI: Sản lượng (${consumption}) tăng > 100% so với Tháng -3 (${compareMonth})! Bắt buộc nhập ghi chú.`;
-          warningType = 'error';
-        } else if (consumption > compareMonth * 1.3) {
-          warningMessage = `Sản lượng tiêu thụ (${consumption}) tăng > 30% so với Tháng -3 (${compareMonth})!`;
-          warningType = 'warning';
-        } else if (consumption < compareMonth * 0.7) {
-          warningMessage = `Sản lượng tiêu thụ (${consumption}) giảm > 30% so với Tháng -3 (${compareMonth})!`;
-          warningType = 'warning';
-        } else {
-          warningMessage = `Sản lượng: ${consumption} (Bình thường)`;
-          warningType = 'success';
-        }
-      } else {
-        warningMessage = `Sản lượng tiêu thụ: ${consumption}`;
-        warningType = 'success';
-      }
-    }
-  }
+  const openModal = (customer: Customer) => setSelectedCustomer(customer);
 
   return (
     <div className="space-y-6">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="border-b border-gray-200 px-6 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
           <nav className="-mb-px flex space-x-8">
@@ -554,6 +341,14 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                       Quản lý phân công
                     </button>
                   )}
+                  <button
+                    onClick={exportCSV}
+                    title="Xuất CSV"
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    <Download className="h-4 w-4 mr-2 text-gray-500" />
+                    Xuất CSV
+                  </button>
                 </div>
               </div>
 
@@ -685,7 +480,14 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                                 )}
                               </td>
                               <td className="px-4 py-4 text-sm text-gray-900 font-medium">{c.ASSIGN}</td>
-                              <td className="px-4 py-4 text-sm text-gray-500 italic">{c.USER || 'Chưa có'}</td>
+                              <td className="px-4 py-4 text-sm text-gray-500 italic">
+                                <div className="flex flex-col gap-1">
+                                  <span>{c.USER || 'Chưa có'}</span>
+                                  {(() => { const { maLoi } = parseGhiChu(c.GHI_CHU || ''); return maLoi ? (
+                                    <span className="inline-flex w-fit items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">{maLoi}</span>
+                                  ) : null; })()}
+                                </div>
+                              </td>
                             </tr>
                           );
                         })}
@@ -761,9 +563,14 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                               </a>
                             ) : null}
                           </div>
-                          <div className="flex justify-between text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                          <div className="flex justify-between text-xs text-gray-500 bg-gray-50 p-2 rounded items-center">
                             <span><span className="font-medium text-gray-700">PC:</span> {c.ASSIGN}</span>
-                            <span><span className="font-medium text-gray-700">Người ghi:</span> {c.USER || 'Chưa có'}</span>
+                            <div className="flex items-center gap-1.5">
+                              {(() => { const { maLoi } = parseGhiChu(c.GHI_CHU || ''); return maLoi ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">{maLoi}</span>
+                              ) : null; })()}
+                              <span><span className="font-medium text-gray-700">Người ghi:</span> {c.USER || 'Chưa có'}</span>
+                            </div>
                           </div>
                         </div>
                       );
@@ -998,424 +805,18 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
 
       {/* Modal Ghi Chỉ Số */}
       {selectedCustomer && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={() => setSelectedCustomer(null)}></div>
-          <div className="relative bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200">
-            <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
-              <h3 className="text-lg sm:text-xl font-semibold text-gray-900 border-b pb-3 mb-4 flex justify-between items-center sm:hidden sticky top-0 bg-white z-10 -mx-4 -mt-4 px-4 pt-4 shadow-sm">
-                <span>Chi tiết & Ghi chỉ số</span>
-                <div className="flex gap-1">
-                   <button onClick={handlePrev} disabled={!hasPrev} className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent"><ChevronLeft className="h-5 w-5" /></button>
-                   <button onClick={handleNext} disabled={!hasNext} className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent"><ChevronRight className="h-5 w-5" /></button>
-                   <div className="w-px h-6 bg-gray-300 mx-1"></div>
-                   <button onClick={() => setSelectedCustomer(null)} className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100">
-                     <X className="h-5 w-5" />
-                   </button>
-                </div>
-              </h3>
-              <h3 className="text-lg sm:text-xl font-semibold text-gray-900 border-b pb-3 mb-4 hidden sm:flex justify-between items-center">
-                <span>Chi tiết & Ghi chỉ số</span>
-                <div className="flex gap-2">
-                   <button onClick={handlePrev} disabled={!hasPrev} className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent" title="Khách hàng trước"><ChevronLeft className="h-5 w-5" /></button>
-                   <button onClick={handleNext} disabled={!hasNext} className="p-1.5 rounded-md text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent" title="Khách hàng tiếp theo"><ChevronRight className="h-5 w-5" /></button>
-                </div>
-              </h3>
-              <div className="space-y-4 text-sm text-gray-600">
-                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 space-y-1">
-                        <p className="font-bold text-lg text-blue-900 mb-1">{selectedCustomer.TEN_KHANG}</p>
-                        <p className="text-blue-800"><strong>Mã KH:</strong> {selectedCustomer.MA_KHANG}</p>
-                        <p className="text-blue-800"><strong>Địa chỉ:</strong> {selectedCustomer.DIA_CHI}</p>
-                        <p className="text-blue-800">
-                          <strong>Mã trạm:</strong> {selectedCustomer.MA_TRAM}
-                          {selectedCustomer.MA_TRAM && <span className="ml-1 inline-flex text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase">Trạm: {getStationName(selectedCustomer.MA_TRAM)}</span>}
-                           | <strong>Số CT:</strong> {selectedCustomer.SO_CTO}
-                        </p>
-                        <p className="text-blue-800">
-                          <strong>Mã GC:</strong> {selectedCustomer.MA_GHI_CHU || 'N/A'} | 
-                          {selectedCustomer.MA_SOGCS && <span> <strong>Sổ GCS:</strong> {selectedCustomer.MA_SOGCS} | </span>}
-                          <strong>BCS:</strong> {selectedCustomer.BCS || 'N/A'}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2 pt-1">
-                          {selectedCustomer.DTHOAI && (
-                            <>
-                              <strong className="text-blue-800">SĐT:</strong>
-                              <a 
-                                href={`tel:${selectedCustomer.DTHOAI}`} 
-                                className="inline-flex bg-green-50 text-green-700 px-2 py-0.5 rounded-sm border border-green-200 hover:bg-green-100 items-center gap-1 transition-colors text-xs font-semibold"
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                                {selectedCustomer.DTHOAI}
-                              </a>
-                            </>
-                          )}
-                          
-                          {selectedCustomer.LATITUDE && selectedCustomer.LONGITUDE ? (
-                            <a 
-                              href={`https://www.google.com/maps?q=${selectedCustomer.LATITUDE},${selectedCustomer.LONGITUDE}`} 
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex ml-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-sm border border-blue-200 hover:bg-blue-200 items-center gap-1 transition-colors text-xs font-semibold"
-                            >
-                              <MapPin className="h-3 w-3" />
-                              Vị trí
-                            </a>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={openLocationModal}
-                            className="inline-flex ml-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded-sm border border-gray-300 hover:bg-gray-200 items-center gap-1 transition-colors text-xs font-semibold"
-                            title="Cập nhật vị trí hiện tại"
-                          >
-                            <Navigation className="h-3 w-3" />
-                            Cập nhật toạ độ
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
-                          <LayoutDashboard className="h-4 w-4 mr-2 text-gray-500" /> Lịch sử sản lượng
-                        </h4>
-                        <div className="grid grid-cols-3 gap-3 text-center">
-                          <div className="bg-white p-2 rounded shadow-sm border border-gray-100">
-                            <div className="text-xs text-gray-500 mb-1">Tháng -1</div>
-                            <div className="font-semibold text-gray-900">{selectedCustomer.SLUONG_1}</div>
-                          </div>
-                          <div className="bg-white p-2 rounded shadow-sm border border-gray-100">
-                            <div className="text-xs text-gray-500 mb-1">Tháng -2</div>
-                            <div className="font-semibold text-gray-900">{selectedCustomer.SLUONG_2}</div>
-                          </div>
-                          <div className="bg-white p-2 rounded shadow-sm border border-gray-100">
-                            <div className="text-xs text-gray-500 mb-1">Tháng -3</div>
-                            <div className="font-semibold text-gray-900">{selectedCustomer.SLUONG_3}</div>
-                          </div>
-                        </div>
-                        <div className="mt-3 pt-3 border-t border-gray-200 grid grid-cols-2 gap-4">
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium text-gray-600">Chỉ số cũ (kỳ trước)</span>
-                            <span className="font-bold text-lg text-gray-900">{selectedCustomer.CHISO_CU || '---'}</span>
-                          </div>
-                          <div className="flex flex-col text-right">
-                            <span className="text-sm font-medium text-gray-600">Trung bình 3 tháng</span>
-                            <span className="font-bold text-lg text-blue-600">
-                              {Math.round((Number(selectedCustomer.SLUONG_1) + Number(selectedCustomer.SLUONG_2) + Number(selectedCustomer.SLUONG_3)) / 3)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-6 space-y-4">
-                        <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 shadow-sm relative">
-                          <label htmlFor="chiso" className="block text-base font-bold text-gray-900 mb-3 flex items-center justify-center">
-                            <Zap className="h-5 w-5 mr-2 text-yellow-600" /> NHẬP CHỈ SỐ ĐIỆN MỚI
-                          </label>
-                          <input
-                            type="number"
-                            pattern="[0-9]*"
-                            inputMode="numeric"
-                            id="chiso"
-                            value={chiSoInput}
-                            onChange={(e) => setChiSoInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !saving) {
-                                e.preventDefault();
-                                handleSaveReading();
-                              }
-                            }}
-                            className={cn(
-                              "block w-full rounded-lg shadow-inner text-4xl p-4 font-bold text-center bg-white transition-colors",
-                              warningType === 'error' ? "border-2 border-red-500 text-red-600 focus:ring-red-600 focus:border-red-600" :
-                              warningType === 'warning' ? "border-2 border-orange-500 text-orange-600 focus:ring-orange-500 focus:border-orange-500" :
-                              "border border-gray-300 text-blue-700 focus:ring-blue-600 focus:border-blue-600"
-                            )}
-                            placeholder="0"
-                            autoFocus
-                          />
-                          {warningMessage && (
-                            <div className={cn(
-                              "mt-3 p-2.5 rounded-lg text-sm font-medium text-center border animate-in slide-in-from-top-1",
-                              warningType === 'error' ? "bg-red-50 text-red-700 border-red-200" :
-                              warningType === 'warning' ? "bg-orange-50 text-orange-700 border-orange-200" :
-                              "bg-green-50 text-green-700 border-green-200"
-                            )}>
-                              {warningMessage}
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Mã lỗi đo xa
-                          </label>
-                          <div className="relative" ref={maLoiDropdownRef}>
-                            <div
-                              className="border border-gray-300 rounded-lg shadow-sm px-3 py-2.5 bg-white cursor-pointer flex justify-between items-center"
-                              onClick={() => { setIsMaLoiDropdownOpen(v => !v); setMaLoiSearch(''); }}
-                            >
-                              <span className={cn("text-sm truncate", maLoiInput ? "text-gray-900 font-medium" : "text-gray-400")}>
-                                {maLoiInput ? MA_LOI_OPTIONS.find(o => o.ma === maLoiInput)?.hienThi : '-- Không có lỗi --'}
-                              </span>
-                              <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                                {maLoiInput && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setMaLoiInput('');
-                                      setMaLoiSearch('');
-                                      setIsMaLoiDropdownOpen(false);
-                                    }}
-                                    className="text-gray-400 hover:text-gray-600"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                )}
-                                <ChevronDown className="h-4 w-4 text-gray-400" />
-                              </div>
-                            </div>
-                            {isMaLoiDropdownOpen && (
-                              <div className="absolute left-0 right-0 z-20 mt-1 bg-white shadow-lg rounded-lg py-1 ring-1 ring-black ring-opacity-5 overflow-hidden">
-                                <div className="px-2 py-2 sticky top-0 bg-white border-b border-gray-100">
-                                  <input
-                                    type="text"
-                                    autoFocus
-                                    className="w-full border border-gray-300 rounded-md text-sm px-3 py-1.5 focus:ring-blue-500 focus:border-blue-500"
-                                    placeholder="Tìm mã lỗi..."
-                                    value={maLoiSearch}
-                                    onChange={(e) => setMaLoiSearch(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </div>
-                                <div className="max-h-48 overflow-y-auto">
-                                  <div
-                                    className="cursor-pointer py-2 px-3 text-sm text-gray-500 hover:bg-gray-50"
-                                    onClick={() => {
-                                      setMaLoiInput('');
-                                      setIsMaLoiDropdownOpen(false);
-                                      setMaLoiSearch('');
-                                    }}
-                                  >
-                                    -- Không có lỗi --
-                                  </div>
-                                  {MA_LOI_OPTIONS.filter(o =>
-                                    !maLoiSearch || o.hienThi.toLowerCase().includes(maLoiSearch.toLowerCase()) || o.ma.toLowerCase().includes(maLoiSearch.toLowerCase())
-                                  ).map(opt => (
-                                    <div
-                                      key={opt.ma}
-                                      className={cn("cursor-pointer py-2 px-3 text-sm hover:bg-blue-50", maLoiInput === opt.ma ? "bg-blue-50 font-medium text-blue-700" : "text-gray-900")}
-                                      onClick={() => {
-                                        setMaLoiInput(opt.ma);
-                                        setIsMaLoiDropdownOpen(false);
-                                        setMaLoiSearch('');
-                                      }}
-                                    >
-                                      {opt.hienThi}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <label htmlFor="ghichu" className="block text-sm font-medium text-gray-700 mb-1">
-                            Ghi chú
-                          </label>
-                          <textarea
-                            id="ghichu"
-                            value={ghiChuInput}
-                            onChange={(e) => setGhiChuInput(e.target.value)}
-                            rows={2}
-                            className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-3"
-                            placeholder="Nhập ghi chú nếu có..."
-                          />
-                        </div>
-                        <p className="text-center text-xs text-gray-500 mt-3">Nhấn <kbd className="bg-gray-100 border border-gray-300 px-1.5 py-0.5 rounded text-gray-700 font-mono">Enter</kbd> ở ô chỉ số để lưu nhanh</p>
-                      </div>
-                    </div>
-              </div>
-            <div className="bg-gray-50 px-4 sm:px-6 py-4 border-t border-gray-200">
-              {/* Mobile Layout (stacked) and Desktop Layout (flex row) */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                {/* Primary Action - Full width on mobile, auto on desktop */}
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => handleSaveReading('FULL')}
-                  className="order-1 sm:order-3 w-full sm:w-auto sm:ml-auto px-6 py-3 sm:py-2.5 bg-blue-600 text-white rounded-lg font-bold sm:font-medium text-lg sm:text-base hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center transition-colors shadow-sm"
-                >
-                  {savingType === 'FULL' || (!savingType && saving) ? <Loader2 className="animate-spin h-5 w-5 mr-2" /> : <Send className="h-5 w-5 sm:h-4 sm:w-4 mr-2" />}
-                  LƯU CHỈ SỐ
-                </button>
-
-                {/* Secondary Actions Row for Mobile */}
-                <div className="order-2 sm:order-2 grid grid-cols-2 sm:flex gap-3 w-full sm:w-auto">
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => handleSaveReading('NOTE_ONLY')}
-                    className="w-full sm:w-auto px-4 py-2.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-medium hover:bg-emerald-100 disabled:opacity-50 flex items-center justify-center transition-colors"
-                  >
-                    {savingType === 'NOTE_ONLY' && <Loader2 className="animate-spin h-5 w-5 mr-2" />}
-                    Lưu ghi chú
-                  </button>
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="w-full sm:w-auto px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-lg font-medium hover:bg-red-100 disabled:opacity-50 transition-colors flex justify-center items-center"
-                  >
-                    Xóa chỉ số
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ReadingModal
+          initialCustomer={selectedCustomer}
+          currentList={currentList}
+          currentUser={currentUser}
+          stations={stations}
+          onClose={() => setSelectedCustomer(null)}
+          onUpdateLocalCustomer={onUpdateLocalCustomer}
+          onRefreshCustomers={onRefreshCustomers}
+          showToast={showToast}
+        />
       )}
 
-      {/* Zero Reading Confirm Modal */}
-      {showZeroConfirm && selectedCustomer && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => !saving && setShowZeroConfirm(false)}></div>
-          <div className="relative bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 text-center animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <AlertTriangle className="h-8 w-8 text-yellow-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Chỉ số mới là 0</h3>
-            <p className="text-gray-600 mb-6 font-medium">
-              Bạn đang nhập chỉ số mới là <span className="font-bold text-red-600">0</span> cho khách hàng <span className="text-gray-900 font-bold">{selectedCustomer.TEN_KHANG}</span>. Bạn có chắc chắn muốn lưu chỉ số này?
-            </p>
-            <div className="flex gap-3 justify-center">
-              <button
-                onClick={() => setShowZeroConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg font-medium transition-colors"
-                disabled={saving}
-              >
-                Hủy bỏ
-              </button>
-              <button
-                onClick={() => {
-                  setShowZeroConfirm(false);
-                  handleSaveReading('FULL', true);
-                }}
-                className="flex-1 px-4 py-2.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-medium transition-colors flex justify-center items-center disabled:opacity-50"
-                disabled={saving}
-              >
-                {saving && savingType === 'FULL' ? <Loader2 className="animate-spin h-5 w-5 mr-2" /> : null}
-                Chắc chắn lưu
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && selectedCustomer && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => !saving && setShowDeleteConfirm(false)}></div>
-          <div className="relative bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 text-center animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <XCircle className="h-8 w-8 text-red-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Xác nhận xóa chỉ số</h3>
-            <p className="text-gray-600 mb-6 font-medium">
-              Bạn có chắc chắn muốn xóa chỉ số của khách hàng <br/>
-              <span className="text-gray-900 font-bold">{selectedCustomer.TEN_KHANG}</span>? <br/>
-              <span className="text-sm text-gray-500 font-normal">(Chỉ số và thời gian sẽ bị xoá, nhưng ghi chú vẫn được giữ lại)</span>
-            </p>
-            <div className="flex gap-3 justify-center">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg font-medium transition-colors"
-                disabled={saving}
-              >
-                Hủy bỏ
-              </button>
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  handleSaveReading('DELETE_READING');
-                }}
-                className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex justify-center items-center"
-                disabled={saving}
-              >
-                Chắc chắn xóa
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Location Update Modal */}
-      {showLocationModal && selectedCustomer && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => !updatingLocation && setShowLocationModal(false)}></div>
-          <div className="relative bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 text-center animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Navigation className="h-8 w-8 text-blue-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Cập nhật toạ độ</h3>
-            <p className="text-gray-600 mb-4 font-medium">
-              Cập nhật vị trí cho khách hàng <br/>
-              <span className="text-gray-900 font-bold">{selectedCustomer.TEN_KHANG}</span>
-            </p>
-            
-            <div className="bg-gray-50 rounded-lg p-4 mb-6 text-left border border-gray-200">
-              {updatingLocation && !currentLocation && (
-                <div className="flex items-center text-blue-600">
-                  <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                  <span className="font-medium">Đang lấy vị trí hiện tại...</span>
-                </div>
-              )}
-              {locationError && (
-                <div className="text-red-600 text-sm font-medium">
-                  {locationError}
-                  <button 
-                    onClick={fetchCurrentLocation}
-                    className="ml-2 text-blue-600 underline hover:text-blue-800"
-                  >
-                    Thử lại
-                  </button>
-                </div>
-              )}
-              {currentLocation && !updatingLocation && (
-                <div>
-                  <div className="text-sm text-gray-500 mb-1">Vị trí hiện tại:</div>
-                  <div className="font-mono text-gray-900 font-medium">
-                    {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
-                  </div>
-                  <a 
-                    href={`https://www.google.com/maps?q=${currentLocation.lat},${currentLocation.lng}`} 
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium items-center gap-1"
-                  >
-                    <MapPin className="h-4 w-4" /> Xem trên bản đồ
-                  </a>
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 justify-center">
-              <button
-                onClick={() => setShowLocationModal(false)}
-                className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg font-medium transition-colors"
-                disabled={updatingLocation}
-              >
-                Hủy bỏ
-              </button>
-              <button
-                onClick={handleConfirmLocation}
-                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex justify-center items-center disabled:opacity-50"
-                disabled={updatingLocation || !currentLocation}
-              >
-                {updatingLocation && currentLocation ? <Loader2 className="animate-spin h-5 w-5 mr-2" /> : null}
-                Chắc chắn cập nhật
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

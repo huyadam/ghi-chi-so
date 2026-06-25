@@ -7,10 +7,14 @@ const DB_NAME = 'pcvt_ghi_chi_so';
 const DB_VERSION = 1;
 const STORES = ['customers', 'users', 'stations', 'meta'];
 
+// Singleton: chỉ mở 1 connection IDB cho cả app
+let _dbPromise: Promise<IDBDatabase> | null = null;
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
+
     request.onupgradeneeded = () => {
       const db = request.result;
       for (const store of STORES) {
@@ -19,10 +23,14 @@ function openDB(): Promise<IDBDatabase> {
         }
       }
     };
-    
+
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      _dbPromise = null; // reset để retry được
+      reject(request.error);
+    };
   });
+  return _dbPromise;
 }
 
 export async function cacheGet<T>(storeName: string): Promise<T[] | null> {
@@ -47,22 +55,18 @@ export async function cacheGet<T>(storeName: string): Promise<T[] | null> {
 export async function cacheSet<T extends { id?: any }>(storeName: string, data: T[]): Promise<void> {
   try {
     const db = await openDB();
-    const tx = db.transaction(storeName, 'readwrite');
+    // Gộp storeName + 'meta' vào 1 transaction để timestamp luôn được lưu cùng lúc
+    const stores = storeName === 'meta' ? ['meta'] : [storeName, 'meta'];
+    const tx = db.transaction(stores, 'readwrite');
+
     const store = tx.objectStore(storeName);
-    
-    // Clear old data
     store.clear();
-    
-    // Insert new data
     for (const item of data) {
       store.put(item);
     }
-    
-    // Lưu timestamp
-    const metaTx = db.transaction('meta', 'readwrite');
-    const metaStore = metaTx.objectStore('meta');
-    metaStore.put({ key: `${storeName}_timestamp`, value: Date.now() });
-    
+
+    tx.objectStore('meta').put({ key: `${storeName}_timestamp`, value: Date.now() });
+
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);

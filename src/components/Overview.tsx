@@ -12,14 +12,17 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 export default function Overview({ customers, users }: OverviewProps) {
   const stats = useMemo(() => {
     const total = customers.length;
-    const recorded = customers.filter(c => c.CHI_SO).length;
-    const unrecorded = total - recorded;
+    const totalRecorded = customers.filter(c => c.CHI_SO).length;
+    const unrecorded = total - totalRecorded;
     const autoRecorded = customers.filter(c => c.CHI_SO === 'Ghi tự động').length;
-    const manualRecorded = recorded - autoRecorded;
+    const manualRecorded = totalRecorded - autoRecorded;
+
+    // Pre-build user map: HO_TEN → DON_VI (O(n) thay vì O(n×m))
+    const userDonViMap = new Map(users.map(u => [u.HO_TEN, u.DON_VI]));
 
     // By Don Vi
     const byDonViMap = new Map<string, { total: number, auto: number, manual: number }>();
-    
+
     // By Employee
     const byEmployeeMap = new Map<string, { total: number, auto: number, manual: number }>();
 
@@ -39,10 +42,9 @@ export default function Overview({ customers, users }: OverviewProps) {
         }
       }
 
-      // Don Vi stats (find user's don vi)
-      const user = users.find(u => u.HO_TEN === empName);
-      const donVi = user ? user.DON_VI : 'Khác';
-      
+      // Don Vi stats (dùng map đã build sẵn)
+      const donVi = userDonViMap.get(empName) ?? 'Khác';
+
       if (!byDonViMap.has(donVi)) {
         byDonViMap.set(donVi, { total: 0, auto: 0, manual: 0 });
       }
@@ -58,27 +60,27 @@ export default function Overview({ customers, users }: OverviewProps) {
     });
 
     const byDonVi = Array.from(byDonViMap.entries()).map(([name, data]) => {
-      const recorded = data.auto + data.manual;
+      const donViRecorded = data.auto + data.manual;
       return {
         name,
         'Ghi thủ công': data.manual,
         'Ghi tự động': data.auto,
-        'Chưa ghi': data.total - recorded,
+        'Chưa ghi': data.total - donViRecorded,
         total: data.total,
-        percent: data.total > 0 ? Math.round((recorded / data.total) * 100) : 0
+        percent: data.total > 0 ? Math.round((donViRecorded / data.total) * 100) : 0
       };
     }).sort((a, b) => b.total - a.total);
 
     const allEmployees = Array.from(byEmployeeMap.entries()).map(([name, data]) => {
-      const recorded = data.auto + data.manual;
+      const empRecorded = data.auto + data.manual;
       return {
         name,
         'Ghi thủ công': data.manual,
         'Ghi tự động': data.auto,
-        'Chưa ghi': data.total - recorded,
+        'Chưa ghi': data.total - empRecorded,
         total: data.total,
-        recorded: recorded,
-        percent: data.total > 0 ? Math.round((recorded / data.total) * 100) : 0
+        recorded: empRecorded,
+        percent: data.total > 0 ? Math.round((empRecorded / data.total) * 100) : 0
       };
     }).sort((a, b) => b.recorded - a.recorded);
 
@@ -86,7 +88,7 @@ export default function Overview({ customers, users }: OverviewProps) {
     const otherEmployees = allEmployees.slice(10);
 
     return {
-      total, recorded, unrecorded, autoRecorded, manualRecorded, byDonVi, byEmployee: top10Employees, otherEmployees
+      total, recorded: totalRecorded, unrecorded, autoRecorded, manualRecorded, byDonVi, byEmployee: top10Employees, otherEmployees
     };
   }, [customers, users]);
 
