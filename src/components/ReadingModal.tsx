@@ -422,7 +422,7 @@ export default function ReadingModal({
 
                 {/* Mã lỗi đo xa */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Mã lỗi đo xa</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Mã lỗi</label>
                   <div className="relative" ref={maLoiDropdownRef}>
                     <div
                       className="border border-gray-300 rounded-lg shadow-sm px-3 py-2.5 bg-white cursor-pointer flex justify-between items-center"
