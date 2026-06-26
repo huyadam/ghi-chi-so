@@ -262,6 +262,40 @@ export async function triggerSync(): Promise<{ success: boolean; customerCount?:
   }
 }
 
+export async function triggerFullSync(): Promise<{ success: boolean; customerCount?: number; error?: string }> {
+  if (!GAS_URL) {
+    return { success: false, error: 'GAS URL chưa được cấu hình (thiếu VITE_GAS_URL)' };
+  }
+
+  try {
+    const res = await fetch(`${GAS_URL}?action=triggerFullSync`, {
+      method: 'GET',
+      redirect: 'follow',
+    });
+
+    if (!res.ok) {
+      return { success: false, error: `GAS trả về HTTP ${res.status} ${res.statusText}` };
+    }
+
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      console.warn('GAS triggerFullSync response is not JSON:', text.slice(0, 200));
+      return { success: true, customerCount: undefined };
+    }
+  } catch (err: any) {
+    console.error('triggerFullSync fetch error:', err);
+    const isCors = err.message?.includes('fetch') || err.name === 'TypeError';
+    return {
+      success: false,
+      error: isCors
+        ? 'Không thể kết nối GAS (CORS hoặc mạng).'
+        : (err.message || 'Lỗi không xác định'),
+    };
+  }
+}
+
 export async function getSyncStatus(): Promise<any[]> {
   const { data, error } = await supabase
     .from('sync_metadata')

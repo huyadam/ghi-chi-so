@@ -35,6 +35,8 @@ function onOpen() {
     .addItem('Đồng bộ Trạm', 'syncStationsToSupabase')
     .addSeparator()
     .addItem('🔄 Đồng bộ Tất cả', 'syncAll')
+    .addSeparator()
+    .addItem('🆕 Cập nhật tháng mới (FULL — ghi đè chỉ số)', 'syncNewMonth')
     .addToUi();
 }
 
@@ -241,6 +243,122 @@ function syncAll() {
   } catch (err) {
     ui.alert('❌ Lỗi đồng bộ: ' + err.message);
   }
+}
+
+// =================== CẬP NHẬT THÁNG MỚI (FULL SYNC — ghi đè cả chỉ số) ===================
+
+function syncNewMonth() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '⚠️ Cập nhật tháng mới',
+    'Thao tác này sẽ GHI ĐÈ TOÀN BỘ dữ liệu khách hàng (kể cả CHI_SO, USER, THOIGIAN_GHI, GHI_CHU) bằng dữ liệu từ Sheet.\n\nChỉ thực hiện khi bắt đầu tháng mới và Sheet đã cập nhật đầy đủ.\n\nBạn có chắc chắn muốn tiếp tục?',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) {
+    ui.alert('Đã hủy.');
+    return;
+  }
+
+  const reconfirm = ui.alert(
+    '⚠️ Xác nhận lần 2',
+    'Dữ liệu chỉ số của TẤT CẢ nhân viên sẽ bị xóa và thay thế. Không thể hoàn tác.\n\nTiếp tục?',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (reconfirm !== ui.Button.YES) {
+    ui.alert('Đã hủy.');
+    return;
+  }
+
+  const startTime = new Date();
+  try {
+    const count = syncCustomersFullQuiet_();
+    const elapsed = Math.round((new Date() - startTime) / 1000);
+    ui.alert('✅ Cập nhật tháng mới hoàn tất!\n\nĐã đồng bộ: ' + count + ' khách hàng\nThời gian: ' + elapsed + ' giây');
+  } catch (err) {
+    ui.alert('❌ Lỗi: ' + err.message);
+  }
+}
+
+function syncCustomersFullQuiet_() {
+  // Full sync: ghi đè TẤT CẢ cột, kể cả USER, CHI_SO, THOIGIAN_GHI, GHI_CHU
+  const ss = SpreadsheetApp.openById(getSheetId_());
+  const sheet = ss.getSheetByName('Danh sach');
+  if (!sheet) return 0;
+
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const BATCH_SIZE = 500;
+  let total = 0;
+  let batch = [];
+  const sheetMaKhangs = new Set();
+
+  for (let i = 1; i < data.length; i++) {
+    const row = {};
+    for (let j = 0; j < headers.length; j++) {
+      const header = String(headers[j]).trim();
+      if (!header) continue;
+      let value = data[i][j];
+
+      if (header === 'LONGITUDE' || header === 'LATITUDE' || header === 'CHISO_CU') {
+        value = value !== '' && value !== null && value !== undefined ? String(value) : '';
+      }
+      if (header === 'SLUONG_3' || header === 'SLUONG_2' || header === 'SLUONG_1' || header === 'HS_NHAN') {
+        value = Number(value) || 0;
+      }
+
+      row[header] = value;
+    }
+
+    if (!row['MA_KHANG']) continue;
+    sheetMaKhangs.add(String(row['MA_KHANG']));
+    batch.push(row);
+
+    if (batch.length >= BATCH_SIZE) {
+      supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
+      total += batch.length;
+      batch = [];
+    }
+  }
+
+  if (batch.length > 0) {
+    supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
+    total += batch.length;
+  }
+
+  // Xóa records cũ không còn trong Sheet
+  try {
+    const PAGE = 1000;
+    let existingMaKhangs = [];
+    let from = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const rows = supabaseRequest_('GET', 'customers?select=MA_KHANG&limit=' + PAGE + '&offset=' + from, null);
+      rows.forEach(function(r) { existingMaKhangs.push(String(r.MA_KHANG)); });
+      hasMore = rows.length === PAGE;
+      from += PAGE;
+    }
+
+    const toDelete = existingMaKhangs.filter(function(ma) { return !sheetMaKhangs.has(ma); });
+    Logger.log('Full sync cleanup: xóa ' + toDelete.length + ' records cũ');
+
+    const DEL_BATCH = 50;
+    for (let i = 0; i < toDelete.length; i += DEL_BATCH) {
+      const chunk = toDelete.slice(i, i + DEL_BATCH);
+      supabaseRequest_('DELETE', 'customers?MA_KHANG=in.(' + chunk.join(',') + ')', null);
+    }
+  } catch (err) {
+    Logger.log('Full sync cleanup error (non-fatal): ' + err.message);
+  }
+
+  supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
+    last_synced_at: new Date().toISOString(),
+    row_count: total,
+    synced_by: Session.getActiveUser().getEmail() || 'unknown'
+  });
+
+  return total;
 }
 
 // =================== QUIET VERSIONS (dùng cho syncAll & triggerSync từ webapp) ===================
@@ -453,6 +571,20 @@ function doGet(e) {
   if (action === 'getStations') {
     return ContentService.createTextOutput(JSON.stringify(getStations()))
       .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // Cập nhật tháng mới từ webapp — full sync, ghi đè cả chỉ số
+  if (action === 'triggerFullSync') {
+    try {
+      const count = syncCustomersFullQuiet_();
+      syncUsersToSupabaseQuiet_();
+      syncStationsToSupabaseQuiet_();
+      return ContentService.createTextOutput(JSON.stringify({ success: true, customerCount: count }))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.message }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
   }
 
   // Trigger sync từ webapp — chạy đủ 3 bảng

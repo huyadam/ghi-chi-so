@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { User, Customer, Station } from '../types';
-import { fetchCustomers, fetchCustomersCached, fetchStations, triggerSync, getSyncStatus } from '../lib/api';
+import { fetchCustomers, fetchCustomersCached, fetchStations, triggerSync, triggerFullSync, getSyncStatus } from '../lib/api';
 import { LogOut, LayoutDashboard, Edit3, Settings, Menu, X, ChevronLeft, ChevronRight, Zap, WifiOff, RefreshCw, Cloud, CloudOff, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -59,6 +59,7 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
 
   // Sync state
   const [syncing, setSyncing] = useState(false);
+  const [fullSyncing, setFullSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // Toast
@@ -155,6 +156,34 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
       console.error('Sync error:', err);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleFullSync = async () => {
+    setFullSyncing(true);
+    showToast('Đang cập nhật tháng mới từ Google Sheet...', 'info', 0);
+    try {
+      const result = await triggerFullSync();
+      setToasts([]);
+      if (result.success) {
+        await clearCache();
+        await loadData(false);
+        const now = new Date().toLocaleString('vi-VN');
+        setLastSyncTime(now);
+        showToast(
+          `Cập nhật tháng mới thành công!\n${result.customerCount ? result.customerCount + ' khách hàng đã được làm mới.' : 'Dữ liệu đã được cập nhật.'}`,
+          'success',
+          8000,
+        );
+      } else {
+        const errMsg = result.error || 'Lỗi không xác định';
+        showToast(`Cập nhật thất bại: ${errMsg}`, 'error', 8000);
+      }
+    } catch (err: any) {
+      setToasts([]);
+      showToast(`Lỗi: ${err.message || 'Không thể kết nối'}`, 'error', 8000);
+    } finally {
+      setFullSyncing(false);
     }
   };
 
@@ -403,14 +432,16 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
             <Overview customers={customers} users={allUsers} />
           )}
           {activeTab === 'admin' && isAdmin && (
-            <AdminManagement 
-              currentUser={currentUser} 
-              onRefreshCustomers={() => loadData(false)} 
+            <AdminManagement
+              currentUser={currentUser}
+              onRefreshCustomers={() => loadData(false)}
               onUpdateLocalCustomer={handleUpdateLocalCustomer}
               customers={customers}
               onSync={handleSync}
               syncing={syncing}
               lastSyncTime={lastSyncTime}
+              onFullSync={handleFullSync}
+              fullSyncing={fullSyncing}
             />
           )}
           {activeTab === 'station' && (

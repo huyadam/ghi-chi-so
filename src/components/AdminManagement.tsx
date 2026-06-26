@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User, Customer } from '../types';
 import { autoUpdateReadings } from '../lib/api';
-import { Loader2, CheckCircle, AlertCircle, X, Download, RefreshCw, Cloud } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, X, Download, RefreshCw, Cloud, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface AdminManagementProps {
@@ -12,9 +12,11 @@ interface AdminManagementProps {
   onSync?: () => Promise<void>;
   syncing?: boolean;
   lastSyncTime?: string | null;
+  onFullSync?: () => Promise<void>;
+  fullSyncing?: boolean;
 }
 
-export default function AdminManagement({ currentUser, onRefreshCustomers, onUpdateLocalCustomer, customers, onSync, syncing, lastSyncTime }: AdminManagementProps) {
+export default function AdminManagement({ currentUser, onRefreshCustomers, onUpdateLocalCustomer, customers, onSync, syncing, lastSyncTime, onFullSync, fullSyncing }: AdminManagementProps) {
   const [inputList, setInputList] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
@@ -25,6 +27,16 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
   } | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [maKhangListToUpdate, setMaKhangListToUpdate] = useState<string[]>([]);
+
+  // Full sync (cập nhật tháng mới)
+  const [showFullSyncModal, setShowFullSyncModal] = useState(false);
+  const [fullSyncConfirmText, setFullSyncConfirmText] = useState('');
+
+  const handleFullSyncConfirm = async () => {
+    setShowFullSyncModal(false);
+    setFullSyncConfirmText('');
+    if (onFullSync) await onFullSync();
+  };
 
   const handleExportToExcel = () => {
     const hasReading = (val: any) => val !== '' && val !== null && val !== undefined;
@@ -170,6 +182,28 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
         </div>
       )}
 
+      {/* Full Sync — Cập nhật tháng mới */}
+      {onFullSync && (
+        <div className="bg-red-50 border border-red-200 p-6 rounded-lg">
+          <h2 className="text-xl font-bold text-red-800 mb-1 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            Cập nhật tháng mới
+          </h2>
+          <p className="text-sm text-red-700 mb-4">
+            Ghi đè <strong>toàn bộ</strong> dữ liệu khách hàng từ Google Sheet — kể cả chỉ số, người ghi, thời gian, ghi chú.
+            Chỉ dùng khi bắt đầu tháng mới, sau khi Sheet đã được cập nhật đầy đủ.
+          </p>
+          <button
+            onClick={() => { setShowFullSyncModal(true); setFullSyncConfirmText(''); }}
+            disabled={fullSyncing}
+            className="inline-flex items-center px-5 py-2.5 border border-red-400 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-100 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${fullSyncing ? 'animate-spin' : ''}`} />
+            {fullSyncing ? 'Đang cập nhật...' : 'Cập nhật tháng mới'}
+          </button>
+        </div>
+      )}
+
       {/* Auto Update Section */}
       <div className="bg-white p-6 rounded-lg shadow">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Quản lý chỉ số - Ghi tự động</h2>
@@ -254,6 +288,55 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
           </div>
         </div>
       </div>
+
+      {/* Full Sync Confirm Modal */}
+            {showFullSyncModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-lg font-bold text-red-700 flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Xác nhận cập nhật tháng mới
+              </h3>
+              <button onClick={() => setShowFullSyncModal(false)} className="text-gray-400 hover:text-gray-500">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-sm text-red-800 space-y-1">
+              <p>⚠️ Thao tác này sẽ <strong>xóa và ghi đè toàn bộ</strong> dữ liệu khách hàng trong hệ thống bằng dữ liệu từ Google Sheet.</p>
+              <p>Bao gồm: chỉ số đã ghi, người ghi, thời gian ghi, ghi chú của <strong>tất cả nhân viên</strong>.</p>
+              <p className="font-semibold">Không thể hoàn tác sau khi xác nhận.</p>
+            </div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Gõ <span className="font-mono font-bold text-red-600">XAC NHAN</span> để tiếp tục:
+            </label>
+            <input
+              type="text"
+              value={fullSyncConfirmText}
+              onChange={e => setFullSyncConfirmText(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-400"
+              placeholder="XAC NHAN"
+              autoFocus
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowFullSyncModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 font-medium hover:bg-gray-50 text-sm"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleFullSyncConfirm}
+                disabled={fullSyncConfirmText.trim().toUpperCase() !== 'XAC NHAN'}
+                className="px-4 py-2 bg-red-600 text-white rounded-md font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+              >
+                Xác nhận cập nhật
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal */}
       {showConfirmModal && (
