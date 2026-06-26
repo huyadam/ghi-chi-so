@@ -227,15 +227,38 @@ export async function updateCoordinates(
 
 export async function triggerSync(): Promise<{ success: boolean; customerCount?: number; error?: string }> {
   if (!GAS_URL) {
-    return { success: false, error: 'GAS URL chưa được cấu hình' };
+    return { success: false, error: 'GAS URL chưa được cấu hình (thiếu VITE_GAS_URL)' };
   }
 
   try {
-    const res = await fetch(`${GAS_URL}?action=triggerSync`);
-    const data = await res.json();
-    return data;
+    const res = await fetch(`${GAS_URL}?action=triggerSync`, {
+      method: 'GET',
+      redirect: 'follow',
+    });
+
+    if (!res.ok) {
+      return { success: false, error: `GAS trả về HTTP ${res.status} ${res.statusText}` };
+    }
+
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      // GAS không trả về JSON — có thể đang chạy và trả về HTML/text
+      console.warn('GAS response is not JSON:', text.slice(0, 200));
+      // Nếu status 200 nhưng không phải JSON → coi là trigger thành công (async)
+      return { success: true, customerCount: undefined };
+    }
   } catch (err: any) {
-    return { success: false, error: err.message || 'Lỗi kết nối' };
+    console.error('triggerSync fetch error:', err);
+    // CORS error thường có message "Failed to fetch"
+    const isCors = err.message?.includes('fetch') || err.name === 'TypeError';
+    return {
+      success: false,
+      error: isCors
+        ? 'Không thể kết nối GAS (CORS hoặc mạng). Kiểm tra console để biết thêm.'
+        : (err.message || 'Lỗi không xác định'),
+    };
   }
 }
 

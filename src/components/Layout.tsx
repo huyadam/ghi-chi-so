@@ -1,8 +1,38 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { User, Customer, Station } from '../types';
 import { fetchCustomers, fetchCustomersCached, fetchStations, triggerSync, getSyncStatus } from '../lib/api';
-import { LogOut, LayoutDashboard, Edit3, Settings, Menu, X, ChevronLeft, ChevronRight, Zap, WifiOff, RefreshCw, Cloud, CloudOff } from 'lucide-react';
+import { LogOut, LayoutDashboard, Edit3, Settings, Menu, X, ChevronLeft, ChevronRight, Zap, WifiOff, RefreshCw, Cloud, CloudOff, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+// ── Toast ──────────────────────────────────────────────────────────
+type ToastType = 'success' | 'error' | 'warning' | 'info';
+interface Toast { id: number; message: string; type: ToastType; }
+let _toastId = 0;
+
+function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none max-w-sm">
+      {toasts.map(t => (
+        <div key={t.id} className={cn(
+          'flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto animate-in slide-in-from-top-2 duration-200',
+          t.type === 'success' && 'bg-green-600 text-white',
+          t.type === 'error'   && 'bg-red-600 text-white',
+          t.type === 'warning' && 'bg-orange-500 text-white',
+          t.type === 'info'    && 'bg-blue-600 text-white',
+        )}>
+          {t.type === 'success' && <CheckCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+          {t.type === 'error'   && <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+          {t.type === 'warning' && <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+          {t.type === 'info'    && <Info className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+          <span className="flex-1 whitespace-pre-wrap">{t.message}</span>
+          <button onClick={() => onDismiss(t.id)} className="opacity-70 hover:opacity-100 flex-shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 import UpdateReading from './UpdateReading';
 import Overview from './Overview';
 import AdminManagement from './AdminManagement';
@@ -21,15 +51,24 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
   const [activeTab, setActiveTab] = useState<'update' | 'overview' | 'admin' | 'station'>('update');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [dataFromCache, setDataFromCache] = useState(false);
-  
+
   // Sync state
   const [syncing, setSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+
+  // Toast
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const showToast = useCallback((message: string, type: ToastType = 'success', duration = 5000) => {
+    const id = ++_toastId;
+    setToasts(prev => [...prev, { id, message, type }]);
+    if (duration > 0) setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration);
+  }, []);
+  const dismissToast = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
   const loadData = async (useCache = true) => {
     setLoadingCustomers(true);
@@ -72,7 +111,7 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
       setDataFromCache(false);
     } catch (err) {
       console.error('Failed to load data', err);
-      alert('Lỗi khi tải dữ liệu. Vui lòng kiểm tra lại kết nối.');
+      showToast('Lỗi khi tải dữ liệu. Vui lòng kiểm tra lại kết nối.', 'error');
     } finally {
       setLoadingCustomers(false);
     }
@@ -89,19 +128,31 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
 
   const handleSync = async () => {
     setSyncing(true);
+    showToast('Đang kết nối Google Sheet để đồng bộ...', 'info', 0); // persistent until done
     try {
       const result = await triggerSync();
+      // Dismiss the "đang kết nối" toast
+      setToasts([]);
       if (result.success) {
-        // Sau khi sync xong, reload data từ Supabase
         await clearCache();
         await loadData(false);
-        setLastSyncTime(new Date().toLocaleString('vi-VN'));
-        alert(`✅ Đồng bộ thành công! ${result.customerCount || ''} khách hàng đã được cập nhật.`);
+        const now = new Date().toLocaleString('vi-VN');
+        setLastSyncTime(now);
+        showToast(
+          `Đồng bộ thành công!\n${result.customerCount ? result.customerCount + ' khách hàng đã cập nhật.' : 'Dữ liệu đã được làm mới.'}`,
+          'success',
+          6000,
+        );
       } else {
-        alert('❌ Đồng bộ thất bại: ' + (result.error || 'Lỗi không xác định'));
+        const errMsg = result.error || 'Lỗi không xác định';
+        showToast(`Đồng bộ thất bại: ${errMsg}`, 'error', 8000);
+        console.error('Sync failed:', result);
       }
     } catch (err: any) {
-      alert('❌ Lỗi đồng bộ: ' + (err.message || 'Không thể kết nối'));
+      setToasts([]);
+      const errMsg = err.message || 'Không thể kết nối';
+      showToast(`Lỗi đồng bộ: ${errMsg}`, 'error', 8000);
+      console.error('Sync error:', err);
     } finally {
       setSyncing(false);
     }
@@ -142,6 +193,7 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       {/* Mobile Sidebar Overlay */}
       <AnimatePresence>
         {isMobileMenuOpen && (
