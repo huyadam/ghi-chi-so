@@ -53,7 +53,7 @@ function supabaseRequest_(method, path, payload) {
   if (!config.url || !config.key) {
     throw new Error('Chưa cấu hình SUPABASE_URL và SUPABASE_SERVICE_KEY trong Script Properties!');
   }
-  
+
   const options = {
     method: method,
     headers: {
@@ -64,18 +64,18 @@ function supabaseRequest_(method, path, payload) {
     },
     muteHttpExceptions: true
   };
-  
+
   if (payload) {
     options.payload = JSON.stringify(payload);
   }
-  
+
   const response = UrlFetchApp.fetch(config.url + '/rest/v1/' + path, options);
   const code = response.getResponseCode();
-  
+
   if (code >= 400) {
     throw new Error('Supabase error (' + code + '): ' + response.getContentText());
   }
-  
+
   const text = response.getContentText();
   return text ? JSON.parse(text) : null;
 }
@@ -90,15 +90,15 @@ function syncCustomersToSupabase() {
     ui.alert('Không tìm thấy sheet "Danh sach"!');
     return;
   }
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
-  
+
   const BATCH_SIZE = 500;
   let totalUpserted = 0;
   let batch = [];
   const SKIP = getCustomerSkipColumns_();
-  
+
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
@@ -106,44 +106,39 @@ function syncCustomersToSupabase() {
       if (!header) continue;
       if (SKIP.indexOf(header) !== -1) continue;
       let value = data[i][j];
-      
-      // Chuyển số thành chuỗi cho các trường text
+
       if (header === 'LONGITUDE' || header === 'LATITUDE' || header === 'CHISO_CU') {
         value = value !== '' && value !== null && value !== undefined ? String(value) : '';
       }
-      // Chuyển thành số cho các trường numeric
       if (header === 'SLUONG_3' || header === 'SLUONG_2' || header === 'SLUONG_1' || header === 'HS_NHAN') {
         value = Number(value) || 0;
       }
-      
+
       row[header] = value;
     }
-    
-    // Bỏ qua dòng trống
+
     if (!row['MA_KHANG']) continue;
-    
+
     batch.push(row);
-    
+
     if (batch.length >= BATCH_SIZE) {
       supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
       totalUpserted += batch.length;
       batch = [];
     }
   }
-  
-  // Batch cuối
+
   if (batch.length > 0) {
     supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
     totalUpserted += batch.length;
   }
-  
-  // Cập nhật metadata
+
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
     last_synced_at: new Date().toISOString(),
     row_count: totalUpserted,
     synced_by: Session.getActiveUser().getEmail() || 'unknown'
   });
-  
+
   ui.alert('✅ Đồng bộ Khách hàng thành công!\n\nĐã upsert: ' + totalUpserted + ' dòng');
 }
 
@@ -155,11 +150,11 @@ function syncUsersToSupabase() {
     ui.alert('Không tìm thấy sheet "User"!');
     return;
   }
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const rows = [];
-  
+
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
@@ -169,20 +164,19 @@ function syncUsersToSupabase() {
     row['MSNV'] = String(row['MSNV']);
     rows.push(row);
   }
-  
-  // Xóa tất cả users cũ và insert mới (bảng nhỏ)
+
   supabaseRequest_('DELETE', 'users?id=gt.0', null);
-  
+
   if (rows.length > 0) {
     supabaseRequest_('POST', 'users', rows);
   }
-  
+
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.users', {
     last_synced_at: new Date().toISOString(),
     row_count: rows.length,
     synced_by: Session.getActiveUser().getEmail() || 'unknown'
   });
-  
+
   ui.alert('✅ Đồng bộ Người dùng thành công!\n\nĐã cập nhật: ' + rows.length + ' người');
 }
 
@@ -194,61 +188,54 @@ function syncStationsToSupabase() {
     ui.alert('Không tìm thấy sheet "TBA"!');
     return;
   }
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const BATCH_SIZE = 500;
   let totalInserted = 0;
   let batch = [];
-  
-  // Xóa tất cả stations cũ
+
   supabaseRequest_('DELETE', 'stations?id=gt.0', null);
-  
+
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
       row[headers[j]] = data[i][j];
     }
     batch.push(row);
-    
+
     if (batch.length >= BATCH_SIZE) {
       supabaseRequest_('POST', 'stations', batch);
       totalInserted += batch.length;
       batch = [];
     }
   }
-  
+
   if (batch.length > 0) {
     supabaseRequest_('POST', 'stations', batch);
     totalInserted += batch.length;
   }
-  
+
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.stations', {
     last_synced_at: new Date().toISOString(),
     row_count: totalInserted,
     synced_by: Session.getActiveUser().getEmail() || 'unknown'
   });
-  
+
   ui.alert('✅ Đồng bộ Trạm thành công!\n\nĐã cập nhật: ' + totalInserted + ' trạm');
 }
 
 function syncAll() {
   const ui = SpreadsheetApp.getUi();
   const startTime = new Date();
-  
+
   try {
-    // Sync tuần tự
     ui.alert('Bắt đầu đồng bộ toàn bộ dữ liệu...\nVui lòng đợi, quá trình có thể mất 2-3 phút.');
-    
-    // Users (nhỏ nhất, nhanh nhất)
+
     syncUsersToSupabaseQuiet_();
-    
-    // Stations
     syncStationsToSupabaseQuiet_();
-    
-    // Customers (lớn nhất, lâu nhất)
     const customerCount = syncCustomersToSupabaseQuiet_();
-    
+
     const elapsed = Math.round((new Date() - startTime) / 1000);
     ui.alert('🎉 Đồng bộ Tất cả hoàn tất!\n\nThời gian: ' + elapsed + ' giây\nKhách hàng: ' + customerCount + ' dòng');
   } catch (err) {
@@ -256,23 +243,23 @@ function syncAll() {
   }
 }
 
-// Quiet versions (không hiện alert riêng)
+// =================== QUIET VERSIONS (dùng cho syncAll & triggerSync từ webapp) ===================
+
 function syncUsersToSupabaseQuiet_() {
   const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('User');
   if (!sheet) return 0;
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const rows = [];
-  
+
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
       const header = String(headers[j]).trim();
-      if (!header) continue; // Bỏ qua cột header rỗng
+      if (!header) continue;
       let value = data[i][j];
-      // STT là INTEGER — chuyển rỗng thành null
       if (header === 'STT') {
         value = (value !== '' && value !== null && value !== undefined) ? Number(value) : null;
       }
@@ -282,16 +269,16 @@ function syncUsersToSupabaseQuiet_() {
     row['MSNV'] = String(row['MSNV']);
     rows.push(row);
   }
-  
+
   supabaseRequest_('DELETE', 'users?id=gt.0', null);
   if (rows.length > 0) supabaseRequest_('POST', 'users', rows);
-  
+
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.users', {
     last_synced_at: new Date().toISOString(),
     row_count: rows.length,
     synced_by: Session.getActiveUser().getEmail() || 'unknown'
   });
-  
+
   return rows.length;
 }
 
@@ -299,77 +286,71 @@ function syncStationsToSupabaseQuiet_() {
   const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('TBA');
   if (!sheet) return 0;
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const BATCH_SIZE = 500;
   let total = 0;
   let batch = [];
-  
+
   supabaseRequest_('DELETE', 'stations?id=gt.0', null);
-  
+
   const NUMERIC_COLS = ['Công suất', 'X', 'Y', 'Imax', 'Idm'];
   const INTEGER_COLS = ['STT', 'Pha', 'Số MBA', 'Năm VH'];
-  
+
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
       const header = String(headers[j]).trim();
-      if (!header) continue; // Bỏ qua cột header rỗng
+      if (!header) continue;
       let value = data[i][j];
-      
-      // Xử lý cột "Năm VH": Sheet có thể lưu dạng Date → lấy năm
+
       if (header === 'Năm VH') {
         if (value instanceof Date) {
           value = value.getFullYear();
         } else if (value !== '' && value !== null && value !== undefined) {
           const num = Number(value);
-          // Nếu > 3000 thì có thể là timestamp → chuyển về năm
           value = (num > 3000) ? new Date(num).getFullYear() : (isNaN(num) ? null : num);
         } else {
           value = null;
         }
-      }
-      // Cột NUMERIC — chuyển rỗng/Date thành null
-      else if (NUMERIC_COLS.includes(header)) {
+      } else if (NUMERIC_COLS.includes(header)) {
         if (value instanceof Date) {
           value = null;
         } else {
           value = (value !== '' && value !== null && value !== undefined) ? Number(value) || null : null;
         }
-      }
-      // Cột INTEGER — chuyển rỗng/Date thành null
-      else if (INTEGER_COLS.includes(header)) {
+      } else if (INTEGER_COLS.includes(header)) {
         if (value instanceof Date) {
           value = null;
         } else {
           value = (value !== '' && value !== null && value !== undefined) ? Number(value) : null;
-          // Kiểm tra giới hạn INTEGER (-2^31 ~ 2^31-1)
           if (value !== null && (value > 2147483647 || value < -2147483648)) value = null;
         }
       }
-      
+
       row[header] = value;
     }
     batch.push(row);
-    
+
     if (batch.length >= BATCH_SIZE) {
       supabaseRequest_('POST', 'stations', batch);
       total += batch.length;
       batch = [];
     }
   }
+
   if (batch.length > 0) {
     supabaseRequest_('POST', 'stations', batch);
     total += batch.length;
   }
-  
+
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.stations', {
     last_synced_at: new Date().toISOString(),
     row_count: total,
     synced_by: Session.getActiveUser().getEmail() || 'unknown'
   });
-  
+
   return total;
 }
 
@@ -377,80 +358,107 @@ function syncCustomersToSupabaseQuiet_() {
   const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
   if (!sheet) return 0;
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const BATCH_SIZE = 500;
   let total = 0;
   let batch = [];
   const SKIP = getCustomerSkipColumns_();
-  
+  const sheetMaKhangs = new Set(); // theo dõi MA_KHANG trong Sheet để cleanup sau
+
   for (let i = 1; i < data.length; i++) {
     const row = {};
     for (let j = 0; j < headers.length; j++) {
       const header = String(headers[j]).trim();
-      if (!header) continue; // Bỏ qua cột header rỗng
+      if (!header) continue;
       if (SKIP.indexOf(header) !== -1) continue;
       let value = data[i][j];
-      
+
       if (header === 'LONGITUDE' || header === 'LATITUDE' || header === 'CHISO_CU') {
         value = value !== '' && value !== null && value !== undefined ? String(value) : '';
       }
       if (header === 'SLUONG_3' || header === 'SLUONG_2' || header === 'SLUONG_1' || header === 'HS_NHAN') {
         value = Number(value) || 0;
       }
-      
+
       row[header] = value;
     }
-    
+
     if (!row['MA_KHANG']) continue;
+    sheetMaKhangs.add(String(row['MA_KHANG']));
     batch.push(row);
-    
+
     if (batch.length >= BATCH_SIZE) {
       supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
       total += batch.length;
       batch = [];
     }
   }
-  
+
   if (batch.length > 0) {
     supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
     total += batch.length;
   }
-  
+
+  // Xóa records cũ trong Supabase không còn trong Sheet (dữ liệu tháng cũ)
+  try {
+    const PAGE = 1000;
+    let existingMaKhangs = [];
+    let from = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const rows = supabaseRequest_('GET', 'customers?select=MA_KHANG&limit=' + PAGE + '&offset=' + from, null);
+      rows.forEach(function(r) { existingMaKhangs.push(String(r.MA_KHANG)); });
+      hasMore = rows.length === PAGE;
+      from += PAGE;
+    }
+
+    const toDelete = existingMaKhangs.filter(function(ma) { return !sheetMaKhangs.has(ma); });
+    Logger.log('Cleanup: sẽ xóa ' + toDelete.length + ' records cũ');
+
+    const DEL_BATCH = 50;
+    for (let i = 0; i < toDelete.length; i += DEL_BATCH) {
+      const chunk = toDelete.slice(i, i + DEL_BATCH);
+      supabaseRequest_('DELETE', 'customers?MA_KHANG=in.(' + chunk.join(',') + ')', null);
+    }
+  } catch (err) {
+    Logger.log('Cleanup error (non-fatal): ' + err.message);
+  }
+
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
     last_synced_at: new Date().toISOString(),
     row_count: total,
     synced_by: Session.getActiveUser().getEmail() || 'unknown'
   });
-  
+
   return total;
 }
 
-// =================== API ENDPOINTS (GIỮ NGUYÊN CHO BACKWARD COMPAT) ===================
+// =================== API ENDPOINTS ===================
 
 function doGet(e) {
   const action = e.parameter.action;
-  
+
   if (action === 'getUsers') {
     return ContentService.createTextOutput(JSON.stringify(getUsers()))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  
+
   if (action === 'getCustomers') {
     return ContentService.createTextOutput(JSON.stringify(getCustomers()))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  
+
   if (action === 'getStations') {
     return ContentService.createTextOutput(JSON.stringify(getStations()))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  // Endpoint mới: trigger sync từ webapp
+  // Trigger sync từ webapp — chạy đủ 3 bảng
   if (action === 'triggerSync') {
     try {
-      const count = syncCustomersToSupabaseQuiet_();
+      const count = syncCustomersToSupabaseQuiet_(); // customers trước (lâu nhất, có cleanup)
       syncUsersToSupabaseQuiet_();
       syncStationsToSupabaseQuiet_();
       return ContentService.createTextOutput(JSON.stringify({ success: true, customerCount: count }))
@@ -461,7 +469,7 @@ function doGet(e) {
     }
   }
 
-  // Endpoint mới: lấy thời gian sync gần nhất
+  // Lấy thời gian sync gần nhất
   if (action === 'getSyncStatus') {
     try {
       const config = getSupabaseConfig_();
@@ -478,8 +486,8 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
   }
-  
-  return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'}))
+
+  return ContentService.createTextOutput(JSON.stringify({ error: 'Invalid action' }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -488,32 +496,32 @@ function doPost(e) {
   try {
     data = JSON.parse(e.postData.contents);
   } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({error: 'Invalid JSON'}))
+    return ContentService.createTextOutput(JSON.stringify({ error: 'Invalid JSON' }))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  
+
   const action = data.action;
-  
+
   if (action === 'updateReading') {
     return ContentService.createTextOutput(JSON.stringify(updateReading(data.payload)))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  
+
   if (action === 'autoUpdateReadings') {
     return ContentService.createTextOutput(JSON.stringify(autoUpdateReadings(data.payload)))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  
+
   if (action === 'updateCoordinates') {
     return ContentService.createTextOutput(JSON.stringify(updateCoordinates(data.payload)))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  
-  return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'}))
+
+  return ContentService.createTextOutput(JSON.stringify({ error: 'Invalid action' }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// =================== GIỮ NGUYÊN CÁC HÀM CŨ ===================
+// =================== READ HELPERS ===================
 
 function getUsers() {
   const ss = SpreadsheetApp.openById(getSheetId_());
@@ -570,28 +578,30 @@ function getStations() {
   return stations;
 }
 
+// =================== WRITE HELPERS ===================
+
 function updateReading(payload) {
   const { rowIndex, chiSo, user, thoiGian, ghiChu, updateType, maKhang, bcs } = payload;
   const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
-  
+
   let userCol = headers.indexOf('USER') + 1;
   let chiSoCol = headers.indexOf('CHI_SO') + 1;
   let thoiGianCol = headers.indexOf('THOIGIAN_GHI') + 1;
   let ghiChuCol = headers.indexOf('GHI_CHU') + 1;
   let maKhangCol = headers.indexOf('MA_KHANG');
   let bcsCol = headers.indexOf('BCS');
-  
+
   if (userCol === 0) userCol = 18;
   if (chiSoCol === 0) chiSoCol = 19;
   if (thoiGianCol === 0) thoiGianCol = 20;
   if (ghiChuCol === 0) ghiChuCol = 21;
-  
+
   let targetRowIndex = rowIndex;
-  
+
   if (maKhang !== undefined && maKhangCol >= 0) {
     let found = false;
     if (targetRowIndex <= data.length && data[targetRowIndex - 1][maKhangCol] == maKhang) {
@@ -608,21 +618,21 @@ function updateReading(payload) {
   }
 
   const type = updateType || 'FULL';
-  
+
   if (type === 'DELETE_READING') {
-    sheet.getRange(targetRowIndex, userCol).setValue("");
-    sheet.getRange(targetRowIndex, chiSoCol).setValue("");
-    sheet.getRange(targetRowIndex, thoiGianCol).setValue("");
-    sheet.getRange(targetRowIndex, ghiChuCol).setValue(ghiChu || "");
+    sheet.getRange(targetRowIndex, userCol).setValue('');
+    sheet.getRange(targetRowIndex, chiSoCol).setValue('');
+    sheet.getRange(targetRowIndex, thoiGianCol).setValue('');
+    sheet.getRange(targetRowIndex, ghiChuCol).setValue(ghiChu || '');
   } else if (type === 'NOTE_ONLY') {
-    sheet.getRange(targetRowIndex, ghiChuCol).setValue(ghiChu || "");
+    sheet.getRange(targetRowIndex, ghiChuCol).setValue(ghiChu || '');
   } else {
     sheet.getRange(targetRowIndex, userCol).setValue(user);
     sheet.getRange(targetRowIndex, chiSoCol).setValue(chiSo);
     sheet.getRange(targetRowIndex, thoiGianCol).setValue(thoiGian);
-    sheet.getRange(targetRowIndex, ghiChuCol).setValue(ghiChu || "");
+    sheet.getRange(targetRowIndex, ghiChuCol).setValue(ghiChu || '');
   }
-  
+
   return { success: true };
 }
 
@@ -632,17 +642,17 @@ function autoUpdateReadings(payload) {
   const sheet = ss.getSheetByName('Danh sach');
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
-  
+
   let userCol = headers.indexOf('USER') + 1;
   let chiSoCol = headers.indexOf('CHI_SO') + 1;
   let thoiGianCol = headers.indexOf('THOIGIAN_GHI') + 1;
   let maKhangCol = headers.indexOf('MA_KHANG');
-  
+
   if (userCol === 0) userCol = 18;
   if (chiSoCol === 0) chiSoCol = 19;
   if (thoiGianCol === 0) thoiGianCol = 20;
   if (maKhangCol === -1) maKhangCol = 0;
-  
+
   let updatedCount = 0;
   for (let i = 1; i < data.length; i++) {
     const maKhang = data[i][maKhangCol];
@@ -653,7 +663,7 @@ function autoUpdateReadings(payload) {
       updatedCount++;
     }
   }
-  
+
   return { success: true, updatedCount };
 }
 
@@ -661,26 +671,23 @@ function updateCoordinates(payload) {
   const { rowIndex, lat, lng, maKhang } = payload;
   const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName('Danh sach');
-  
+
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   let latCol = headers.indexOf('LATITUDE') + 1;
   let lngCol = headers.indexOf('LONGITUDE') + 1;
   let maKhangCol = headers.indexOf('MA_KHANG');
-  
+
   if (latCol === 0) latCol = headers.indexOf('Y') + 1;
   if (lngCol === 0) lngCol = headers.indexOf('X') + 1;
-  
   if (latCol === 0) latCol = 11;
   if (lngCol === 0) lngCol = 10;
   if (maKhangCol === -1) maKhangCol = 0;
-  
+
   let targetRowIndex = rowIndex;
-  
+
   if (maKhang !== undefined && maKhangCol >= 0) {
-    if (targetRowIndex <= data.length && data[targetRowIndex - 1][maKhangCol] == maKhang) {
-      // Still valid
-    } else {
+    if (!(targetRowIndex <= data.length && data[targetRowIndex - 1][maKhangCol] == maKhang)) {
       for (let i = 1; i < data.length; i++) {
         if (data[i][maKhangCol] == maKhang) {
           targetRowIndex = i + 1;
@@ -689,15 +696,14 @@ function updateCoordinates(payload) {
       }
     }
   }
-  
+
   const latStr = String(lat).replace(/,/g, '.');
   const lngStr = String(lng).replace(/,/g, '.');
-  
-  sheet.getRange(targetRowIndex, latCol).setNumberFormat("@");
+
+  sheet.getRange(targetRowIndex, latCol).setNumberFormat('@');
   sheet.getRange(targetRowIndex, latCol).setValue(latStr);
-  
-  sheet.getRange(targetRowIndex, lngCol).setNumberFormat("@");
+  sheet.getRange(targetRowIndex, lngCol).setNumberFormat('@');
   sheet.getRange(targetRowIndex, lngCol).setValue(lngStr);
-  
+
   return { success: true };
 }
