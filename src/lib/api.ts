@@ -30,25 +30,37 @@ export async function fetchUsers(): Promise<User[]> {
 }
 
 export async function fetchCustomers(): Promise<Customer[]> {
-  const { data, error } = await supabase
-    .from('customers')
-    .select('*')
-    .order('MA_SOGCS')
-    .order('MA_TRAM')
-    .order('MA_GHI_CHU');
+  // Supabase default limit = 1000 → cần phân trang để lấy hết toàn bộ ~29k records
+  const PAGE_SIZE = 1000;
+  let allCustomers: Customer[] = [];
+  let from = 0;
+  let hasMore = true;
 
-  if (error) {
-    console.error('Supabase fetchCustomers error:', error);
-    // Fallback: trả về cache nếu có
-    const cached = await cacheGet<Customer>('customers');
-    if (cached) return cached;
-    throw new Error('Không thể tải danh sách khách hàng');
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .order('MA_SOGCS')
+      .order('MA_TRAM')
+      .order('MA_GHI_CHU')
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('Supabase fetchCustomers error:', error);
+      // Fallback: trả về cache nếu có
+      const cached = await cacheGet<Customer>('customers');
+      if (cached) return cached;
+      throw new Error('Không thể tải danh sách khách hàng');
+    }
+
+    allCustomers = allCustomers.concat(data as Customer[]);
+    hasMore = data.length === PAGE_SIZE;
+    from += PAGE_SIZE;
   }
 
-  const customers = data as Customer[];
   // Cập nhật cache trong nền
-  cacheSet('customers', customers).catch(() => {});
-  return customers;
+  cacheSet('customers', allCustomers).catch(() => {});
+  return allCustomers;
 }
 
 export async function fetchCustomersCached(): Promise<{ data: Customer[]; fromCache: boolean }> {
