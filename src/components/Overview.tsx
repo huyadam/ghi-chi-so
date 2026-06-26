@@ -7,7 +7,7 @@ interface OverviewProps {
   users: User[];
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+const COLORS = ['#94A3B8', '#3B82F6', '#8B5CF6', '#FF8042', '#8884d8', '#82ca9d'];
 
 export default function Overview({ customers, users }: OverviewProps) {
   const stats = useMemo(() => {
@@ -164,7 +164,7 @@ export default function Overview({ customers, users }: OverviewProps) {
                 <Legend />
                 <Bar dataKey="Ghi thủ công" stackId="a" fill="#3B82F6" />
                 <Bar dataKey="Ghi tự động" stackId="a" fill="#8B5CF6" />
-                <Bar dataKey="Chưa ghi" stackId="a" fill="#E5E7EB" />
+                <Bar dataKey="Chưa ghi" stackId="a" fill="#94A3B8" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -186,7 +186,7 @@ export default function Overview({ customers, users }: OverviewProps) {
                 <Legend verticalAlign="top" />
                 <Bar dataKey="Ghi thủ công" stackId="a" fill="#3B82F6" />
                 <Bar dataKey="Ghi tự động" stackId="a" fill="#8B5CF6" />
-                <Bar dataKey="Chưa ghi" stackId="a" fill="#E5E7EB" />
+                <Bar dataKey="Chưa ghi" stackId="a" fill="#94A3B8" />
               </BarChart>
             </ResponsiveContainer>
           </div>
