@@ -166,6 +166,7 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
     }
     
     // Sort logic
+    const BCS_ORDER = ['BT', 'CD', 'TD', 'VC', 'BN', 'CN', 'TN', 'VN'];
     return list.sort((a, b) => {
       // 1. Compare by MA_SOGCS
       const gcsCmp = String(a.MA_SOGCS || '').localeCompare(String(b.MA_SOGCS || ''), undefined, { numeric: true });
@@ -176,7 +177,13 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
       if (tramCmp !== 0) return tramCmp;
 
       // 3. Compare by MA_GHI_CHU
-      return String(a.MA_GHI_CHU || '').localeCompare(String(b.MA_GHI_CHU || ''), undefined, { numeric: true });
+      const ghiChuCmp = String(a.MA_GHI_CHU || '').localeCompare(String(b.MA_GHI_CHU || ''), undefined, { numeric: true });
+      if (ghiChuCmp !== 0) return ghiChuCmp;
+
+      // 4. Compare by BCS theo thứ tự tùy chỉnh
+      const bcsA = BCS_ORDER.indexOf(String(a.BCS || ''));
+      const bcsB = BCS_ORDER.indexOf(String(b.BCS || ''));
+      return (bcsA === -1 ? 99 : bcsA) - (bcsB === -1 ? 99 : bcsB);
     });
   }, [baseCustomers, filterType, searchQuery, selectedStation, selectedSoGCS]);
 
