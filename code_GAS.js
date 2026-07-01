@@ -56,13 +56,15 @@ function supabaseRequest_(method, path, payload) {
     throw new Error('Chưa cấu hình SUPABASE_URL và SUPABASE_SERVICE_KEY trong Script Properties!');
   }
 
+  const isRead = (method.toUpperCase() === 'GET');
   const options = {
     method: method,
     headers: {
       'apikey': config.key,
       'Authorization': 'Bearer ' + config.key,
       'Content-Type': 'application/json',
-      'Prefer': 'resolution=merge-duplicates,return=minimal'
+      // Không gửi Prefer header cho GET — chỉ dùng cho mutation (POST/PATCH/DELETE)
+      ...(isRead ? {} : { 'Prefer': 'resolution=merge-duplicates,return=minimal' })
     },
     muteHttpExceptions: true
   };
@@ -327,7 +329,15 @@ function syncCustomersFullQuiet_() {
     total += batch.length;
   }
 
-  // Xóa records cũ không còn trong Sheet
+  // Xóa records cũ không còn trong Sheet — CHỈ chạy khi Sheet đủ dữ liệu
+  const MIN_SHEET_ROWS = 500; // ngưỡng an toàn: PC Vũng Tàu có ~23k KH
+  if (sheetMaKhangs.size < MIN_SHEET_ROWS) {
+    // Sheet quá ít dữ liệu → có thể đang bị lỗi đọc hoặc chưa load xong
+    // Không xóa để tránh mất dữ liệu
+    Logger.log('SAFETY GUARD: Sheet chỉ có ' + sheetMaKhangs.size + ' MA_KHANG (< ' + MIN_SHEET_ROWS + '). Bỏ qua cleanup để tránh xóa nhầm dữ liệu.');
+    throw new Error('Sheet quá ít dữ liệu (' + sheetMaKhangs.size + ' dòng). Kiểm tra lại Sheet "Danh sach" trước khi chạy Cập nhật tháng mới.');
+  }
+
   try {
     const PAGE = 1000;
     let existingMaKhangs = [];
@@ -341,7 +351,7 @@ function syncCustomersFullQuiet_() {
     }
 
     const toDelete = existingMaKhangs.filter(function(ma) { return !sheetMaKhangs.has(ma); });
-    Logger.log('Full sync cleanup: xóa ' + toDelete.length + ' records cũ');
+    Logger.log('Full sync cleanup: xóa ' + toDelete.length + ' records cũ (Sheet có ' + sheetMaKhangs.size + ' KH)');
 
     const DEL_BATCH = 50;
     for (let i = 0; i < toDelete.length; i += DEL_BATCH) {
@@ -349,7 +359,8 @@ function syncCustomersFullQuiet_() {
       supabaseRequest_('DELETE', 'customers?MA_KHANG=in.(' + chunk.join(',') + ')', null);
     }
   } catch (err) {
-    Logger.log('Full sync cleanup error (non-fatal): ' + err.message);
+    Logger.log('Full sync cleanup error: ' + err.message);
+    throw err; // re-throw để caller biết có lỗi
   }
 
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
@@ -483,7 +494,9 @@ function syncCustomersToSupabaseQuiet_() {
   let total = 0;
   let batch = [];
   const SKIP = getCustomerSkipColumns_();
-  const sheetMaKhangs = new Set(); // theo dõi MA_KHANG trong Sheet để cleanup sau
+  // Lưu ý: Regular sync (đồng bộ từ Google Sheet) KHÔNG xóa records cũ.
+  // Việc xóa chỉ xảy ra khi dùng "Cập nhật tháng mới" (syncCustomersFullQuiet_).
+  // Lý do: nếu Sheet tạm thời rỗng/lỗi, cleanup sẽ xóa toàn bộ dữ liệu Supabase.
 
   for (let i = 1; i < data.length; i++) {
     const row = {};
@@ -504,7 +517,6 @@ function syncCustomersToSupabaseQuiet_() {
     }
 
     if (!row['MA_KHANG']) continue;
-    sheetMaKhangs.add(String(row['MA_KHANG']));
     batch.push(row);
 
     if (batch.length >= BATCH_SIZE) {
@@ -517,31 +529,6 @@ function syncCustomersToSupabaseQuiet_() {
   if (batch.length > 0) {
     supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
     total += batch.length;
-  }
-
-  // Xóa records cũ trong Supabase không còn trong Sheet (dữ liệu tháng cũ)
-  try {
-    const PAGE = 1000;
-    let existingMaKhangs = [];
-    let from = 0;
-    let hasMore = true;
-    while (hasMore) {
-      const rows = supabaseRequest_('GET', 'customers?select=MA_KHANG&limit=' + PAGE + '&offset=' + from, null);
-      rows.forEach(function(r) { existingMaKhangs.push(String(r.MA_KHANG)); });
-      hasMore = rows.length === PAGE;
-      from += PAGE;
-    }
-
-    const toDelete = existingMaKhangs.filter(function(ma) { return !sheetMaKhangs.has(ma); });
-    Logger.log('Cleanup: sẽ xóa ' + toDelete.length + ' records cũ');
-
-    const DEL_BATCH = 50;
-    for (let i = 0; i < toDelete.length; i += DEL_BATCH) {
-      const chunk = toDelete.slice(i, i + DEL_BATCH);
-      supabaseRequest_('DELETE', 'customers?MA_KHANG=in.(' + chunk.join(',') + ')', null);
-    }
-  } catch (err) {
-    Logger.log('Cleanup error (non-fatal): ' + err.message);
   }
 
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
@@ -590,7 +577,7 @@ function doGet(e) {
   // Trigger sync từ webapp — chạy đủ 3 bảng
   if (action === 'triggerSync') {
     try {
-      const count = syncCustomersToSupabaseQuiet_(); // customers trước (lâu nhất, có cleanup)
+      const count = syncCustomersToSupabaseQuiet_(); // customers trước (lâu nhất) — chỉ upsert, không xóa
       syncUsersToSupabaseQuiet_();
       syncStationsToSupabaseQuiet_();
       return ContentService.createTextOutput(JSON.stringify({ success: true, customerCount: count }))

@@ -323,13 +323,15 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
         for (const row of rows) {
           const maKhang = String(row['MA_KHANG'] ?? '').trim();
           if (!maKhang) continue;
-          const chiSoMoi = String(row['Chỉ số mới'] ?? '').trim();
+          // Chấp nhận cả cột "Chỉ số mới" (mẫu nhập) lẫn "CHI_SO" (file đã xuất)
+          const chiSoMoi = String(row['Chỉ số mới'] ?? row['CHI_SO'] ?? '').trim();
           if (!chiSoMoi) { notFilled++; continue; }
           const customer = customerMap.get(maKhang);
           if (!customer) { notFound.push(maKhang); continue; }
           const maLoi = String(row['Mã lỗi'] ?? '').trim();
-          const ghiChuNote = String(row['Ghi chú'] ?? '').trim();
-          const ghiChu = buildGhiChu(maLoi, ghiChuNote);
+          // "Ghi chú" từ mẫu nhập, hoặc "GHI_CHU" từ file đã xuất
+          const ghiChuNote = String(row['Ghi chú'] ?? row['GHI_CHU'] ?? '').trim();
+          const ghiChu = maLoi ? buildGhiChu(maLoi, ghiChuNote) : ghiChuNote;
           if (hasReading(customer.CHI_SO)) {
             hasReadingRows.push({ maKhang, tenKhang: customer.TEN_KHANG, chiSo: String(customer.CHI_SO) });
           } else {
