@@ -321,16 +321,17 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
         const notFound: string[] = [];
         let notFilled = 0;
         for (const row of rows) {
-          const maKhang = String(row['MA_KHANG'] ?? '').trim();
+          // Hỗ trợ nhiều tên cột: mẫu nhập (MA_KHANG), file xuất (Mã KH)
+          const maKhang = String(row['MA_KHANG'] ?? row['Mã KH'] ?? '').trim();
           if (!maKhang) continue;
-          // Chấp nhận cả cột "Chỉ số mới" (mẫu nhập) lẫn "CHI_SO" (file đã xuất)
-          const chiSoMoi = String(row['Chỉ số mới'] ?? row['CHI_SO'] ?? '').trim();
+          // Hỗ trợ: "Chỉ số mới" (mẫu nhập), "CHI_SO", "Chỉ Số" (file xuất)
+          const chiSoMoi = String(row['Chỉ số mới'] ?? row['CHI_SO'] ?? row['Chỉ Số'] ?? '').trim();
           if (!chiSoMoi) { notFilled++; continue; }
           const customer = customerMap.get(maKhang);
           if (!customer) { notFound.push(maKhang); continue; }
-          const maLoi = String(row['Mã lỗi'] ?? '').trim();
-          // "Ghi chú" từ mẫu nhập, hoặc "GHI_CHU" từ file đã xuất
-          const ghiChuNote = String(row['Ghi chú'] ?? row['GHI_CHU'] ?? '').trim();
+          const maLoi = String(row['Mã lỗi'] ?? row['Mã Lỗi'] ?? '').trim();
+          // Hỗ trợ: "Ghi chú" (mẫu), "GHI_CHU", "Ghi Chú" (file xuất)
+          const ghiChuNote = String(row['Ghi chú'] ?? row['Ghi Chú'] ?? row['GHI_CHU'] ?? '').trim();
           const ghiChu = maLoi ? buildGhiChu(maLoi, ghiChuNote) : ghiChuNote;
           if (hasReading(customer.CHI_SO)) {
             hasReadingRows.push({ maKhang, tenKhang: customer.TEN_KHANG, chiSo: String(customer.CHI_SO) });
@@ -1101,7 +1102,7 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
           showToast={showToast}
         />
       )}
-
     </div>
   );
 }
+
