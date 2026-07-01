@@ -1,8 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { User, Customer } from '../types';
-import { autoUpdateReadings } from '../lib/api';
-import { Loader2, CheckCircle, AlertCircle, X, Download, RefreshCw, Cloud, AlertTriangle } from 'lucide-react';
+import { autoUpdateReadings, updateReading } from '../lib/api';
+import { Loader2, CheckCircle, AlertCircle, X, Download, RefreshCw, Cloud, AlertTriangle, Upload, FileSpreadsheet } from 'lucide-react';
+import { buildGhiChu } from '../lib/ghiChu';
 import * as XLSX from 'xlsx';
+
+interface ImportRow {
+  maKhang: string;
+  bcs: string;
+  tenKhang: string;
+  chiSoMoi: string;
+  ghiChu: string;
+}
+
+interface ImportPreview {
+  toWrite: ImportRow[];
+  hasReading: Array<{ maKhang: string; tenKhang: string; chiSo: string }>;
+  notFound: string[];
+  notFilled: number;
+}
 
 interface AdminManagementProps {
   currentUser: User;
@@ -27,6 +43,86 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
   } | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [maKhangListToUpdate, setMaKhangListToUpdate] = useState<string[]>([]);
+
+  // Bulk import state
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importResult, setImportResult] = useState<{ success: number; errors: string[] } | null>(null);
+
+  const hasReadingVal = (val: any) => val !== '' && val !== null && val !== undefined;
+
+  const handleImportFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target!.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json<any>(sheet);
+        // Dùng TOÀN BỘ customers (không lọc theo nhân viên)
+        const customerMap = new Map(customers.map(c => [String(c.MA_KHANG), c]));
+        const toWrite: ImportRow[] = [];
+        const hasReadingRows: ImportPreview['hasReading'] = [];
+        const notFound: string[] = [];
+        let notFilled = 0;
+        for (const row of rows) {
+          const maKhang = String(row['MA_KHANG'] ?? row['Mã KH'] ?? '').trim();
+          if (!maKhang) continue;
+          const chiSoMoi = String(row['Chỉ số mới'] ?? row['CHI_SO'] ?? row['Chỉ Số'] ?? '').trim();
+          if (!chiSoMoi) { notFilled++; continue; }
+          const customer = customerMap.get(maKhang);
+          if (!customer) { notFound.push(maKhang); continue; }
+          const maLoi = String(row['Mã lỗi'] ?? row['Mã Lỗi'] ?? '').trim();
+          const ghiChuNote = String(row['Ghi chú'] ?? row['Ghi Chú'] ?? row['GHI_CHU'] ?? '').trim();
+          const ghiChu = maLoi ? buildGhiChu(maLoi, ghiChuNote) : ghiChuNote;
+          if (hasReadingVal(customer.CHI_SO)) {
+            hasReadingRows.push({ maKhang, tenKhang: customer.TEN_KHANG, chiSo: String(customer.CHI_SO) });
+          } else {
+            toWrite.push({ maKhang, bcs: customer.BCS || '', tenKhang: customer.TEN_KHANG, chiSoMoi, ghiChu });
+          }
+        }
+        setImportPreview({ toWrite, hasReading: hasReadingRows, notFound, notFilled });
+        setImportResult(null);
+      } catch {
+        alert('Không thể đọc file. Dùng file .xlsx đúng định dạng.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview || importPreview.toWrite.length === 0) return;
+    setImporting(true);
+    setImportProgress(0);
+    const thoiGian = new Date().toLocaleString('vi-VN');
+    let success = 0;
+    const errors: string[] = [];
+    const { toWrite } = importPreview;
+    const CHUNK = 8;
+    for (let i = 0; i < toWrite.length; i += CHUNK) {
+      const chunk = toWrite.slice(i, i + CHUNK);
+      await Promise.all(chunk.map(async (row) => {
+        try {
+          await updateReading(row.maKhang, row.bcs, row.chiSoMoi, currentUser.HO_TEN, thoiGian, row.ghiChu);
+          success++;
+          if (onUpdateLocalCustomer) {
+            onUpdateLocalCustomer(row.maKhang, { CHI_SO: row.chiSoMoi, USER: currentUser.HO_TEN, THOIGIAN_GHI: thoiGian, GHI_CHU: row.ghiChu });
+          }
+        } catch {
+          errors.push(row.maKhang);
+        }
+      }));
+      setImportProgress(Math.min(100, Math.round((i + CHUNK) / toWrite.length * 100)));
+    }
+    setImporting(false);
+    setImportResult({ success, errors });
+    setImportPreview(null);
+  };
 
   // Full sync (cập nhật tháng mới)
   const [showFullSyncModal, setShowFullSyncModal] = useState(false);
@@ -288,6 +384,122 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
           </div>
         </div>
       </div>
+
+      {/* Bulk Import Section */}
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h2 className="text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
+          <FileSpreadsheet className="h-5 w-5 text-green-600" />
+          Nhập dữ liệu hàng loạt từ Excel
+        </h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Upload file Excel (đã xuất hoặc đúng định dạng) để ghi chỉ số cho nhiều khách hàng cùng lúc.
+          Chỉ ghi vào KH chưa có chỉ số — KH đã có sẽ bỏ qua.
+        </p>
+
+        {importResult && (
+          <div className={`mb-4 p-4 rounded-lg ${importResult.errors.length === 0 ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+            <p className={`font-medium text-sm ${importResult.errors.length === 0 ? 'text-green-800' : 'text-amber-800'}`}>
+              ✅ Đã ghi thành công {importResult.success} khách hàng.
+              {importResult.errors.length > 0 && ` ❌ ${importResult.errors.length} lỗi.`}
+            </p>
+            {importResult.errors.length > 0 && (
+              <div className="mt-2 font-mono text-xs text-red-700 max-h-24 overflow-y-auto bg-red-50 rounded p-2">
+                {importResult.errors.join(', ')}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="inline-flex items-center px-4 py-2 border border-green-400 text-sm font-medium rounded-md text-green-700 bg-green-50 hover:bg-green-100 transition-colors"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Chọn file Excel
+          </button>
+          <input ref={importFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImportFileSelect} />
+          <span className="text-xs text-gray-400">Hỗ trợ file đã xuất từ hệ thống hoặc file mẫu</span>
+        </div>
+      </div>
+
+      {/* Import Preview Modal */}
+      {importPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h3 className="text-lg font-bold text-gray-900">Xác nhận nhập dữ liệu</h3>
+              <button onClick={() => setImportPreview(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-green-50 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-green-700">{importPreview.toWrite.length}</div>
+                  <div className="text-xs text-green-600 mt-1">Sẽ được ghi</div>
+                </div>
+                <div className="bg-amber-50 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-amber-700">{importPreview.hasReading.length}</div>
+                  <div className="text-xs text-amber-600 mt-1">Đã có chỉ số (bỏ qua)</div>
+                </div>
+              </div>
+              {importPreview.notFound.length > 0 && (
+                <p className="text-xs text-red-600 mb-3">⚠️ {importPreview.notFound.length} mã không tìm thấy trong hệ thống.</p>
+              )}
+              {importPreview.notFilled > 0 && (
+                <p className="text-xs text-gray-500 mb-3">{importPreview.notFilled} dòng không có chỉ số → bỏ qua.</p>
+              )}
+              {importPreview.toWrite.length > 0 && (
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Mã KH</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Tên KH</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Chỉ số</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {importPreview.toWrite.slice(0, 50).map((row, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="px-3 py-1.5 font-mono text-gray-600">{row.maKhang}</td>
+                          <td className="px-3 py-1.5 text-gray-800 truncate max-w-[180px]">{row.tenKhang}</td>
+                          <td className="px-3 py-1.5 font-medium text-green-700">{row.chiSoMoi}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {importPreview.toWrite.length > 50 && (
+                    <p className="text-center text-xs text-gray-400 py-2">... và {importPreview.toWrite.length - 50} dòng khác</p>
+                  )}
+                </div>
+              )}
+            </div>
+            {importing && (
+              <div className="px-6 pb-2">
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="bg-green-500 h-2 rounded-full transition-all" style={{ width: `${importProgress}%` }} />
+                </div>
+                <p className="text-xs text-gray-500 mt-1 text-center">{importProgress}%</p>
+              </div>
+            )}
+            <div className="flex justify-end gap-3 p-6 border-t">
+              <button onClick={() => setImportPreview(null)} disabled={importing} className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 text-sm hover:bg-gray-50 disabled:opacity-50">
+                Hủy
+              </button>
+              <button
+                onClick={handleConfirmImport}
+                disabled={importing || importPreview.toWrite.length === 0}
+                className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                {importing ? <><Loader2 className="animate-spin h-4 w-4 mr-2" />Đang ghi...</> : `Ghi ${importPreview.toWrite.length} dòng`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full Sync Confirm Modal */}
             {showFullSyncModal && (

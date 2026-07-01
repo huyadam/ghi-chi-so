@@ -478,23 +478,6 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
                     <Download className="h-4 w-4 mr-2 text-gray-500" />
                     Xuất CSV
                   </button>
-                  <button
-                    onClick={downloadTemplate}
-                    title="Tải file mẫu để nhập hàng loạt"
-                    className="inline-flex items-center px-3 py-1.5 border border-blue-300 shadow-sm text-sm font-medium rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  >
-                    <FileSpreadsheet className="h-4 w-4 mr-2" />
-                    Tải mẫu
-                  </button>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Nhập chỉ số từ file Excel"
-                    className="inline-flex items-center px-3 py-1.5 border border-green-300 shadow-sm text-sm font-medium rounded-md text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Nhập từ Excel
-                  </button>
-                  <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelect} />
                 </div>
               </div>
 
