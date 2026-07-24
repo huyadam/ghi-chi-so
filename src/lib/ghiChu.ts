@@ -1,16 +1,22 @@
 export const MA_LOI_SEPARATOR = ' | ';
 
-export const MA_LOI_OPTIONS = [
-  { ma: 'MH',   hienThi: 'MH-Lỗi màn hình' },
-  { ma: 'TH',   hienThi: 'TH-Công tơ lỗi mất tín hiệu' },
-  { ma: 'HH',   hienThi: 'HH-Công tơ bị hư hỏng' },
-  { ma: 'CH',   hienThi: 'CH-Công tơ cháy' },
-  { ma: 'KD',   hienThi: 'KD-Công tơ không sử dụng - Đề nghị thu hồi' },
-  { ma: 'AT',   hienThi: 'AT-Công tơ treo mất an toàn' },
-  { ma: 'SG',   hienThi: 'SG-Công tơ sai giờ' },
-  { ma: 'VN',   hienThi: 'VN-Thường xuyên vắng nhà' },
-  { ma: 'KC',   hienThi: 'KC-Không tìm thấy công tơ' },
-  { ma: 'KT',   hienThi: 'KT-Công tơ khác trạm' },
+export const MA_LOI_OPTIONS: {
+  ma: string;
+  hienThi: string;
+  ghiChuHint?: string;   // gợi ý hiển thị khi chọn
+  requireNote?: boolean; // bắt buộc phải nhập ghi chú
+}[] = [
+  { ma: 'H', hienThi: 'H - Công tơ hư hỏng' },
+  { ma: 'L', hienThi: 'L - Lố chỉ số' },
+  { ma: 'Y', hienThi: 'Y - Chỉ số đúng', ghiChuHint: 'Tăng/giảm >30% so với tháng trước — bắt buộc dùng mã Y' },
+  { ma: 'U', hienThi: 'U - Không dùng' },
+  { ma: 'V', hienThi: 'V - Nhà khóa cửa' },
+  { ma: 'G', hienThi: 'G - Không còn công tơ' },
+  { ma: 'D', hienThi: 'D - Đang cắt điện' },
+  { ma: 'Q', hienThi: 'Q - Công tơ qua tua' },
+  { ma: 'X', hienThi: 'X - Thay, chưa treo CMIS', ghiChuHint: 'Bắt buộc ghi chú số No mới', requireNote: true },
+  { ma: 'S', hienThi: 'S - Khác trạm', ghiChuHint: 'Bắt buộc ghi chú vị trí đúng của công tơ', requireNote: true },
+  { ma: 'W', hienThi: 'W - Sai khác', ghiChuHint: 'Bắt buộc ghi chú nội dung cần báo', requireNote: true },
   { ma: 'Khác', hienThi: 'Khác' },
 ];
 

@@ -173,6 +173,12 @@ export default function ReadingModal({
           return;
         }
       }
+      // Mã bắt buộc ghi chú (X, S, W)
+      const selectedOpt = MA_LOI_OPTIONS.find(o => o.ma === maLoiInput);
+      if (selectedOpt?.requireNote && !ghiChuInput.trim()) {
+        showToast(`Mã "${maLoiInput}" bắt buộc nhập ghi chú. ${selectedOpt.ghiChuHint ?? ''}`, 'error');
+        return;
+      }
       if (chiSoInput.trim() === '0' && !skipZeroCheck) {
         setShowZeroConfirm(true);
         return;
@@ -474,16 +480,41 @@ export default function ReadingModal({
                   </div>
                 </div>
 
+                {/* Hint khi chọn mã cần ghi chú */}
+                {(() => {
+                  const opt = MA_LOI_OPTIONS.find(o => o.ma === maLoiInput);
+                  if (!opt?.ghiChuHint) return null;
+                  return (
+                    <div className={cn(
+                      'flex items-start gap-2 text-xs px-3 py-2 rounded-lg',
+                      opt.requireNote ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-blue-50 text-blue-700'
+                    )}>
+                      <span className="mt-0.5 flex-shrink-0">{opt.requireNote ? '⚠️' : 'ℹ️'}</span>
+                      <span>{opt.ghiChuHint}</span>
+                    </div>
+                  );
+                })()}
+
                 {/* Ghi chú */}
                 <div>
-                  <label htmlFor="ghichu" className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+                  <label htmlFor="ghichu" className="block text-sm font-medium text-gray-700 mb-1">
+                    Ghi chú
+                    {MA_LOI_OPTIONS.find(o => o.ma === maLoiInput)?.requireNote && (
+                      <span className="ml-1 text-red-500 font-normal text-xs">(bắt buộc)</span>
+                    )}
+                  </label>
                   <textarea
                     id="ghichu"
                     value={ghiChuInput}
                     onChange={(e) => setGhiChuInput(e.target.value)}
                     rows={2}
-                    className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm border p-3"
-                    placeholder="Nhập ghi chú nếu có..."
+                    className={cn(
+                      'block w-full rounded-lg shadow-sm sm:text-sm border p-3',
+                      MA_LOI_OPTIONS.find(o => o.ma === maLoiInput)?.requireNote && !ghiChuInput.trim()
+                        ? 'border-amber-400 focus:ring-amber-400 focus:border-amber-400'
+                        : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
+                    )}
+                    placeholder={MA_LOI_OPTIONS.find(o => o.ma === maLoiInput)?.ghiChuHint ?? 'Nhập ghi chú nếu có...'}
                   />
                 </div>
                 <p className="text-center text-xs text-gray-500 mt-3">
