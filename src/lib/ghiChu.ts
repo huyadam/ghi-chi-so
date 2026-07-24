@@ -15,7 +15,7 @@ export const MA_LOI_OPTIONS: {
   { ma: 'D', hienThi: 'D - Đang cắt điện' },
   { ma: 'Q', hienThi: 'Q - Công tơ qua tua' },
   { ma: 'X', hienThi: 'X - Thay, chưa treo CMIS', ghiChuHint: 'Bắt buộc ghi chú số No mới', requireNote: true },
-  { ma: 'S', hienThi: 'S - Khác trạm', ghiChuHint: 'Bắt buộc ghi chú vị trí đúng của công tơ', requireNote: true },
+  { ma: 'P', hienThi: 'P - Khác trạm', ghiChuHint: 'Bắt buộc ghi chú vị trí đúng của công tơ', requireNote: true },
   { ma: 'W', hienThi: 'W - Sai khác', ghiChuHint: 'Bắt buộc ghi chú nội dung cần báo', requireNote: true },
 ];
 
