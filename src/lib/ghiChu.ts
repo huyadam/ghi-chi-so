@@ -6,7 +6,8 @@ export const MA_LOI_OPTIONS: {
   ghiChuHint?: string;   // gợi ý hiển thị khi chọn
   requireNote?: boolean; // bắt buộc phải nhập ghi chú
 }[] = [
-  { ma: 'H', hienThi: 'H - Công tơ hư hỏng' },
+  { ma: 'H', hienThi: 'H - Công tơ mất tín hiệu màn hình' },
+  { ma: 'K', hienThi: 'K - Công tơ đứng số (Có sử dụng, màn hình có tín hiệu)' },
   { ma: 'L', hienThi: 'L - Lố chỉ số' },
   { ma: 'Y', hienThi: 'Y - Chỉ số đúng', ghiChuHint: 'Tăng/giảm >30% so với tháng trước — bắt buộc dùng mã Y' },
   { ma: 'U', hienThi: 'U - Không dùng' },
