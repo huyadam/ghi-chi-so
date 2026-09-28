@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Customer, User } from '../types';
+import { countKH, countKHBy } from '../lib/khachHang';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 interface OverviewProps {
@@ -11,52 +12,25 @@ const COLORS = ['#94A3B8', '#3B82F6', '#8B5CF6', '#FF8042', '#8884d8', '#82ca9d'
 
 export default function Overview({ customers, users }: OverviewProps) {
   const stats = useMemo(() => {
-    const total = customers.length;
-    const totalRecorded = customers.filter(c => c.CHI_SO).length;
-    const unrecorded = total - totalRecorded;
-    const autoRecorded = customers.filter(c => c.CHI_SO === 'Ghi tự động').length;
-    const manualRecorded = totalRecorded - autoRecorded;
+    // Đếm theo số KH (MA_KHANG) — 1 KH nhiều BCS chỉ tính 1
+    const all = countKH(customers);
+    const total = all.total;
+    const totalRecorded = all.recorded;
+    const unrecorded = all.unrecorded;
+    const autoRecorded = all.auto;
+    const manualRecorded = all.manual;
 
-    // Pre-build user map: HO_TEN → DON_VI (O(n) thay vì O(n×m))
+    // Pre-build user map: HO_TEN → DON_VI
     const userDonViMap = new Map(users.map(u => [u.HO_TEN, u.DON_VI]));
 
-    // By Don Vi
     const byDonViMap = new Map<string, { total: number, auto: number, manual: number }>();
-
-    // By Employee
     const byEmployeeMap = new Map<string, { total: number, auto: number, manual: number }>();
 
-    customers.forEach(c => {
-      // Employee stats
-      const empName = c.ASSIGN;
-      if (!byEmployeeMap.has(empName)) {
-        byEmployeeMap.set(empName, { total: 0, auto: 0, manual: 0 });
-      }
-      const empStat = byEmployeeMap.get(empName)!;
-      empStat.total++;
-      if (c.CHI_SO) {
-        if (c.CHI_SO === 'Ghi tự động') {
-            empStat.auto++;
-        } else {
-            empStat.manual++;
-        }
-      }
-
-      // Don Vi stats (dùng map đã build sẵn)
-      const donVi = userDonViMap.get(empName) ?? 'Khác';
-
-      if (!byDonViMap.has(donVi)) {
-        byDonViMap.set(donVi, { total: 0, auto: 0, manual: 0 });
-      }
-      const dvStat = byDonViMap.get(donVi)!;
-      dvStat.total++;
-      if (c.CHI_SO) {
-        if (c.CHI_SO === 'Ghi tự động') {
-            dvStat.auto++;
-        } else {
-            dvStat.manual++;
-        }
-      }
+    countKHBy(customers, c => c.ASSIGN).forEach((k, empName) => {
+      byEmployeeMap.set(empName, { total: k.total, auto: k.auto, manual: k.manual });
+    });
+    countKHBy(customers, c => userDonViMap.get(c.ASSIGN) ?? 'Khác').forEach((k, donVi) => {
+      byDonViMap.set(donVi, { total: k.total, auto: k.auto, manual: k.manual });
     });
 
     const byDonVi = Array.from(byDonViMap.entries()).map(([name, data]) => {
@@ -103,7 +77,7 @@ export default function Overview({ customers, users }: OverviewProps) {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-sm font-medium text-gray-500">Tổng số công tơ</h3>
+          <h3 className="text-sm font-medium text-gray-500">Tổng số khách hàng</h3>
           <p className="mt-2 text-3xl font-bold text-gray-900">{stats.total}</p>
         </div>
         <div className="bg-white p-6 rounded-lg shadow">

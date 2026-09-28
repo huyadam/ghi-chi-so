@@ -3,6 +3,7 @@ import { User, Customer, Station } from '../types';
 import { fetchCustomers, fetchCustomersCached, fetchStations, triggerSync, triggerFullSync, getSyncStatus } from '../lib/api';
 import { LogOut, LayoutDashboard, Edit3, Settings, Menu, X, ChevronLeft, ChevronRight, Zap, WifiOff, RefreshCw, Cloud, CloudOff, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { countKH } from '../lib/khachHang';
 
 // ── Toast ──────────────────────────────────────────────────────────
 type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -216,8 +217,10 @@ export default function Layout({ currentUser, allUsers, onLogout }: LayoutProps)
   ];
 
   // Calculate progress
-  const totalAssigned = customers.length;
-  const totalRecorded = customers.filter(c => c.CHI_SO).length;
+  // Đếm theo số KH (MA_KHANG)
+  const khTotals = React.useMemo(() => countKH(customers), [customers]);
+  const totalAssigned = khTotals.total;
+  const totalRecorded = khTotals.recorded;
   const progressPercent = totalAssigned > 0 ? (totalRecorded / totalAssigned) * 100 : 0;
 
   return (

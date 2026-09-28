@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Customer, Station } from '../types';
+import { countKHBy } from '../lib/khachHang';
 import { WifiOff, Search, MapPin, AlertTriangle, ExternalLink } from 'lucide-react';
 
 interface StationConnectionProps {
@@ -12,12 +13,10 @@ export default function StationConnection({ customers, stations }: StationConnec
 
   const stationStats = useMemo(() => {
     // 1. Group unrecorded customers by MA_TRAM
+    // Đếm theo số KH (MA_KHANG) chưa ghi đủ
     const stats: Record<string, { unrecorded: number }> = {};
-    customers.forEach(c => {
-      if (!c.CHI_SO) {
-        stats[c.MA_TRAM] = stats[c.MA_TRAM] || { unrecorded: 0 };
-        stats[c.MA_TRAM].unrecorded += 1;
-      }
+    countKHBy(customers, c => c.MA_TRAM).forEach((k, maTram) => {
+      if (k.unrecorded > 0) stats[maTram] = { unrecorded: k.unrecorded };
     });
 
     // 2. Create a map of stations for quick lookup

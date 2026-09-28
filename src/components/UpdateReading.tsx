@@ -6,6 +6,7 @@ import { parseGhiChu, buildGhiChu, MA_LOI_OPTIONS } from '../lib/ghiChu';
 import { updateReading } from '../lib/api';
 import * as XLSX from 'xlsx';
 import ReadingModal from './ReadingModal';
+import { countKH, countKHBy } from '../lib/khachHang';
 
 type ToastType = 'success' | 'error' | 'warning';
 interface Toast { id: number; message: string; type: ToastType; }
@@ -127,10 +128,12 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
     return Array.from(defaultAvailable).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
   }, [baseCustomers]);
 
-  const totalAssigned = baseCustomers.length;
-  const totalManual = baseCustomers.filter(c => hasReading(c.CHI_SO) && c.CHI_SO !== 'Ghi tự động').length;
-  const totalAuto = baseCustomers.filter(c => c.CHI_SO === 'Ghi tự động').length;
-  const totalUnrecorded = baseCustomers.filter(c => !hasReading(c.CHI_SO)).length;
+  // Đếm theo số KH (MA_KHANG), không theo số dòng BCS
+  const khCount = useMemo(() => countKH(baseCustomers), [customers, selectedEmployee]);
+  const totalAssigned = khCount.total;
+  const totalManual = khCount.manual;
+  const totalAuto = khCount.auto;
+  const totalUnrecorded = khCount.unrecorded;
 
   // Filtered customers for "Phân công"
   const assignedCustomers = useMemo(() => {
@@ -200,20 +203,11 @@ export default function UpdateReading({ currentUser, allUsers, customers, statio
 
   // Employee stats for Assignment Manager
   const employeeStats = useMemo(() => {
-    const stats: Record<string, { total: number; recorded: number }> = {};
-    customers.forEach(c => {
-      if (!c.ASSIGN) return;
-      if (!stats[c.ASSIGN]) {
-        stats[c.ASSIGN] = { total: 0, recorded: 0 };
-      }
-      stats[c.ASSIGN].total += 1;
-      if (hasReading(c.CHI_SO)) {
-        stats[c.ASSIGN].recorded += 1;
-      }
-    });
+    // Đếm theo số KH (MA_KHANG) cho từng nhân viên
+    const byEmp = countKHBy(customers.filter(c => c.ASSIGN), c => c.ASSIGN);
 
-    return Object.entries(stats)
-      .map(([name, data]) => ({ name, ...data }))
+    return Array.from(byEmp.entries())
+      .map(([name, data]) => ({ name, total: data.total, recorded: data.recorded }))
       .filter(stat => 
         stat.name.toLowerCase().includes(assignmentSearch.toLowerCase())
       )
