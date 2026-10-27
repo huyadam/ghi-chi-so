@@ -198,6 +198,7 @@ export default function ReadingModal({
         thoiGian,
         ghiChuSave,
         updateType,
+        customer.id,
       );
 
       if (success) {

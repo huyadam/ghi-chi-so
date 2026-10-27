@@ -19,6 +19,40 @@ const PRESERVE_COLUMNS = ['USER', 'CHI_SO', 'THOIGIAN_GHI', 'GHI_CHU'];
 // Toạ độ: true = cho Sheet đẩy LAT/LONG lên (nạp toạ độ hàng loạt); false = web sở hữu, không đè.
 const SYNC_COORDINATES_FROM_SHEET = true;
 
+// Khoá upsert bảng customers: 1 dòng = 1 điểm đo (MA_DDO) x 1 bộ chỉ số (BCS).
+// (Không dùng MA_KHANG,BCS vì 1 khách hàng có thể có nhiều điểm đo, vd PB15020064783 có 6 điểm đo.)
+// Supabase phải có UNIQUE("MA_DDO","BCS") tương ứng.
+const CUSTOMER_CONFLICT_KEY = 'MA_DDO,BCS';
+
+// Kiểm tra trùng khoá trên TOÀN BỘ dữ liệu trước khi đẩy lên, báo rõ dòng nào trùng.
+function assertNoDuplicateKeys_(rows) {
+  const seen = {};
+  const dups = [];
+  rows.forEach(function(r) {
+    const k = String(r['MA_DDO'] || '').trim() + '|' + String(r['BCS'] || '').trim();
+    if (seen[k]) dups.push(k + ' (dòng ' + seen[k] + ' và ' + r._sheetRow + ')');
+    else seen[k] = r._sheetRow;
+  });
+  if (dups.length) {
+    throw new Error('Sheet "Danh sach" có ' + dups.length + ' cặp MA_DDO|BCS bị trùng, sửa trước khi đồng bộ:\n' + dups.slice(0, 20).join('\n'));
+  }
+}
+
+// Đẩy rows lên customers theo lô, trả về số dòng đã upsert.
+function upsertCustomers_(rows) {
+  assertNoDuplicateKeys_(rows);
+  const BATCH = 500;
+  let total = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH).map(function(r) {
+      const o = Object.assign({}, r); delete o._sheetRow; return o;
+    });
+    supabaseRequest_('POST', 'customers?on_conflict=' + CUSTOMER_CONFLICT_KEY, chunk);
+    total += chunk.length;
+  }
+  return total;
+}
+
 function getCustomerSkipColumns_() {
   var skip = PRESERVE_COLUMNS.slice();
   if (!SYNC_COORDINATES_FROM_SHEET) { skip.push('LATITUDE'); skip.push('LONGITUDE'); }
@@ -37,6 +71,8 @@ function onOpen() {
     .addItem('🔄 Đồng bộ Tất cả', 'syncAll')
     .addSeparator()
     .addItem('🆕 Cập nhật tháng mới (FULL — ghi đè chỉ số)', 'syncNewMonth')
+    .addSeparator()
+    .addItem('🧹 Dọn dòng thừa trên Supabase (không còn trong Sheet)', 'cleanupStaleCustomers')
     .addToUi();
 }
 
@@ -84,6 +120,145 @@ function supabaseRequest_(method, path, payload) {
   return text ? JSON.parse(text) : null;
 }
 
+// =================== DỌN DÒNG THỪA (theo khoá MA_DDO|BCS) ===================
+
+function hasVal_(v) { return v !== '' && v !== null && v !== undefined; }
+
+function customerKey_(maDdo, bcs) {
+  return String(maDdo == null ? '' : maDdo).trim() + '|' + String(bcs == null ? '' : bcs).trim();
+}
+
+// Đọc tập khoá MA_DDO|BCS hiện có trong Sheet "Danh sach"
+function readSheetCustomerKeys_() {
+  const sheet = SpreadsheetApp.openById(getSheetId_()).getSheetByName('Danh sach');
+  if (!sheet) throw new Error('Không tìm thấy sheet "Danh sach"');
+  const data = sheet.getDataRange().getValues();
+  const h = data[0].map(function(x) { return String(x).trim(); });
+  const iDdo = h.indexOf('MA_DDO'), iBcs = h.indexOf('BCS'), iKh = h.indexOf('MA_KHANG');
+  if (iDdo < 0 || iBcs < 0 || iKh < 0) throw new Error('Sheet "Danh sach" thiếu cột MA_DDO / BCS / MA_KHANG');
+  const keys = new Set();
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][iKh]) continue;
+    keys.add(customerKey_(data[i][iDdo], data[i][iBcs]));
+  }
+  return keys;
+}
+
+// Lấy toàn bộ dòng customers trên Supabase (phân trang theo id)
+function fetchAllCustomerRows_(select) {
+  const PAGE = 1000;
+  let out = [], from = 0;
+  while (true) {
+    const rows = supabaseRequest_('GET', 'customers?select=' + select + '&order=id.asc&limit=' + PAGE + '&offset=' + from, null) || [];
+    out = out.concat(rows);
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
+// Phân loại: dòng nào trên Supabase không còn trong Sheet (stale),
+// và chỉ số của dòng stale có thể chuyển sang dòng mới tương ứng (cùng MA_KHANG + BCS, đang trống) hay không.
+function analyzeStaleCustomers_() {
+  const sheetKeys = readSheetCustomerKeys_();
+  const MIN_SHEET_ROWS = 500;
+  if (sheetKeys.size < MIN_SHEET_ROWS) {
+    throw new Error('SAFETY: Sheet chỉ có ' + sheetKeys.size + ' dòng (< ' + MIN_SHEET_ROWS + '). Không dọn để tránh xoá nhầm.');
+  }
+  const rows = fetchAllCustomerRows_('id,MA_KHANG,MA_DDO,BCS,TEN_KHANG,ASSIGN,CHI_SO,USER,THOIGIAN_GHI,GHI_CHU');
+  const stale = [], live = [];
+  rows.forEach(function(r) { (sheetKeys.has(customerKey_(r.MA_DDO, r.BCS)) ? live : stale).push(r); });
+
+  const liveByKhBcs = {};
+  live.forEach(function(r) {
+    const k = String(r.MA_KHANG || '').trim() + '|' + String(r.BCS || '').trim();
+    (liveByKhBcs[k] = liveByKhBcs[k] || []).push(r);
+  });
+
+  const moves = [], lost = [];
+  stale.forEach(function(s) {
+    if (!hasVal_(s.CHI_SO)) return;
+    const k = String(s.MA_KHANG || '').trim() + '|' + String(s.BCS || '').trim();
+    const cands = (liveByKhBcs[k] || []).filter(function(r) { return !hasVal_(r.CHI_SO) && !r._claimed; });
+    if (cands.length === 1) { cands[0]._claimed = true; moves.push({ to: cands[0].id, from: s }); }
+    else lost.push(s);
+  });
+  return { total: rows.length, sheetCount: sheetKeys.size, live: live.length, stale: stale, moves: moves, lost: lost };
+}
+
+// Sao lưu dòng sắp xoá ra sheet "Backup_dong_thua" (phòng khi cần khôi phục)
+function backupStaleRows_(rows) {
+  if (!rows.length) return;
+  const ss = SpreadsheetApp.openById(getSheetId_());
+  const name = 'Backup_dong_thua';
+  const sh = ss.getSheetByName(name) || ss.insertSheet(name);
+  const cols = ['id', 'MA_KHANG', 'MA_DDO', 'BCS', 'TEN_KHANG', 'ASSIGN', 'CHI_SO', 'USER', 'THOIGIAN_GHI', 'GHI_CHU'];
+  if (sh.getLastRow() === 0) sh.appendRow(['Thời điểm xoá'].concat(cols));
+  const now = new Date();
+  const values = rows.map(function(r) { return [now].concat(cols.map(function(c) { return r[c] == null ? '' : r[c]; })); });
+  sh.getRange(sh.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
+}
+
+// Gửi nhiều PATCH song song (UrlFetchApp.fetchAll) để không vượt giới hạn 6 phút
+function patchCustomersById_(items) {
+  const config = getSupabaseConfig_();
+  const BATCH = 50;
+  for (let i = 0; i < items.length; i += BATCH) {
+    const reqs = items.slice(i, i + BATCH).map(function(it) {
+      return {
+        url: config.url + '/rest/v1/customers?id=eq.' + it.id,
+        method: 'patch',
+        contentType: 'application/json',
+        headers: { apikey: config.key, Authorization: 'Bearer ' + config.key, Prefer: 'return=minimal' },
+        payload: JSON.stringify(it.data),
+        muteHttpExceptions: true
+      };
+    });
+    UrlFetchApp.fetchAll(reqs).forEach(function(res) {
+      if (res.getResponseCode() >= 400) throw new Error('Supabase PATCH lỗi: ' + res.getContentText());
+    });
+  }
+}
+
+function deleteCustomerIds_(ids) {
+  const BATCH = 200;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    supabaseRequest_('DELETE', 'customers?id=in.(' + ids.slice(i, i + BATCH).join(',') + ')', null);
+  }
+}
+
+// MENU: Dọn dòng thừa — xem trước, hỏi xác nhận, chuyển chỉ số, sao lưu rồi mới xoá
+function cleanupStaleCustomers() {
+  const ui = SpreadsheetApp.getUi();
+  let a;
+  try { a = analyzeStaleCustomers_(); }
+  catch (err) { ui.alert('❌ ' + err.message); return; }
+
+  if (!a.stale.length) {
+    ui.alert('✅ Không có dòng thừa.\n\nSupabase: ' + a.total + ' dòng — khớp với Sheet (' + a.sheetCount + ' dòng).');
+    return;
+  }
+  const msg =
+    'Supabase hiện có: ' + a.total + ' dòng\n' +
+    'Sheet "Danh sach": ' + a.sheetCount + ' dòng (MA_DDO|BCS)\n\n' +
+    'Dòng thừa (không còn trong Sheet): ' + a.stale.length + '\n' +
+    '  • Có chỉ số → chuyển sang dòng mới cùng KH + BCS: ' + a.moves.length + '\n' +
+    '  • Có chỉ số nhưng không chuyển được: ' + a.lost.length + '\n\n' +
+    'Toàn bộ dòng thừa sẽ được sao lưu sang sheet "Backup_dong_thua" trước khi xoá.\n\nTiếp tục?';
+  if (ui.alert('🧹 Dọn dòng thừa', msg, ui.ButtonSet.YES_NO) !== ui.Button.YES) { ui.alert('Đã huỷ.'); return; }
+
+  try {
+    backupStaleRows_(a.stale);
+    patchCustomersById_(a.moves.map(function(m) {
+      return { id: m.to, data: { USER: m.from.USER || '', CHI_SO: m.from.CHI_SO, THOIGIAN_GHI: m.from.THOIGIAN_GHI || '', GHI_CHU: m.from.GHI_CHU || '' } };
+    }));
+    deleteCustomerIds_(a.stale.map(function(r) { return r.id; }));
+    ui.alert('✅ Xong!\n\nĐã chuyển ' + a.moves.length + ' chỉ số sang dòng mới.\nĐã xoá ' + a.stale.length + ' dòng thừa.\nSupabase còn: ' + (a.total - a.stale.length) + ' dòng.');
+  } catch (err) {
+    ui.alert('❌ Lỗi: ' + err.message);
+  }
+}
+
 // =================== SYNC FUNCTIONS ===================
 
 function syncCustomersToSupabase() {
@@ -123,19 +298,12 @@ function syncCustomersToSupabase() {
 
     if (!row['MA_KHANG']) continue;
 
+    row._sheetRow = i + 1;
     batch.push(row);
-
-    if (batch.length >= BATCH_SIZE) {
-      supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
-      totalUpserted += batch.length;
-      batch = [];
-    }
   }
 
-  if (batch.length > 0) {
-    supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
-    totalUpserted += batch.length;
-  }
+  // Kiểm tra trùng khoá trên toàn bộ Sheet rồi mới đẩy lên (tránh lỗi 21000 giữa chừng)
+  totalUpserted = upsertCustomers_(batch);
 
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
     last_synced_at: new Date().toISOString(),
@@ -315,53 +483,19 @@ function syncCustomersFullQuiet_() {
 
     if (!row['MA_KHANG']) continue;
     sheetMaKhangs.add(String(row['MA_KHANG']));
+    row._sheetRow = i + 1;
     batch.push(row);
-
-    if (batch.length >= BATCH_SIZE) {
-      supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
-      total += batch.length;
-      batch = [];
-    }
   }
 
-  if (batch.length > 0) {
-    supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
-    total += batch.length;
-  }
+  // Kiểm tra trùng khoá trên toàn bộ Sheet rồi mới đẩy lên (tránh lỗi 21000 giữa chừng)
+  total = upsertCustomers_(batch);
 
-  // Xóa records cũ không còn trong Sheet — CHỈ chạy khi Sheet đủ dữ liệu
-  const MIN_SHEET_ROWS = 500; // ngưỡng an toàn: PC Vũng Tàu có ~23k KH
-  if (sheetMaKhangs.size < MIN_SHEET_ROWS) {
-    // Sheet quá ít dữ liệu → có thể đang bị lỗi đọc hoặc chưa load xong
-    // Không xóa để tránh mất dữ liệu
-    Logger.log('SAFETY GUARD: Sheet chỉ có ' + sheetMaKhangs.size + ' MA_KHANG (< ' + MIN_SHEET_ROWS + '). Bỏ qua cleanup để tránh xóa nhầm dữ liệu.');
-    throw new Error('Sheet quá ít dữ liệu (' + sheetMaKhangs.size + ' dòng). Kiểm tra lại Sheet "Danh sach" trước khi chạy Cập nhật tháng mới.');
-  }
-
-  try {
-    const PAGE = 1000;
-    let existingMaKhangs = [];
-    let from = 0;
-    let hasMore = true;
-    while (hasMore) {
-      const rows = supabaseRequest_('GET', 'customers?select=MA_KHANG&limit=' + PAGE + '&offset=' + from, null);
-      rows.forEach(function(r) { existingMaKhangs.push(String(r.MA_KHANG)); });
-      hasMore = rows.length === PAGE;
-      from += PAGE;
-    }
-
-    const toDelete = existingMaKhangs.filter(function(ma) { return !sheetMaKhangs.has(ma); });
-    Logger.log('Full sync cleanup: xóa ' + toDelete.length + ' records cũ (Sheet có ' + sheetMaKhangs.size + ' KH)');
-
-    const DEL_BATCH = 50;
-    for (let i = 0; i < toDelete.length; i += DEL_BATCH) {
-      const chunk = toDelete.slice(i, i + DEL_BATCH);
-      supabaseRequest_('DELETE', 'customers?MA_KHANG=in.(' + chunk.join(',') + ')', null);
-    }
-  } catch (err) {
-    Logger.log('Full sync cleanup error: ' + err.message);
-    throw err; // re-throw để caller biết có lỗi
-  }
+  // Xoá dòng trên Supabase không còn trong Sheet — theo khoá MA_DDO|BCS (không theo MA_KHANG),
+  // có safety guard + sao lưu sang sheet "Backup_dong_thua" trước khi xoá.
+  const a = analyzeStaleCustomers_();
+  Logger.log('Full sync cleanup: xoá ' + a.stale.length + ' dòng thừa (Sheet có ' + a.sheetCount + ' dòng)');
+  backupStaleRows_(a.stale);
+  deleteCustomerIds_(a.stale.map(function(r) { return r.id; }));
 
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
     last_synced_at: new Date().toISOString(),
@@ -517,19 +651,12 @@ function syncCustomersToSupabaseQuiet_() {
     }
 
     if (!row['MA_KHANG']) continue;
+    row._sheetRow = i + 1;
     batch.push(row);
-
-    if (batch.length >= BATCH_SIZE) {
-      supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
-      total += batch.length;
-      batch = [];
-    }
   }
 
-  if (batch.length > 0) {
-    supabaseRequest_('POST', 'customers?on_conflict=MA_KHANG,BCS', batch);
-    total += batch.length;
-  }
+  // Kiểm tra trùng khoá trên toàn bộ Sheet rồi mới đẩy lên (tránh lỗi 21000 giữa chừng)
+  total = upsertCustomers_(batch);
 
   supabaseRequest_('PATCH', 'sync_metadata?table_name=eq.customers', {
     last_synced_at: new Date().toISOString(),

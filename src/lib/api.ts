@@ -116,7 +116,8 @@ export async function updateReading(
   user: string,
   thoiGian: string,
   ghiChu: string,
-  updateType: 'FULL' | 'NOTE_ONLY' | 'DELETE_READING' = 'FULL'
+  updateType: 'FULL' | 'NOTE_ONLY' | 'DELETE_READING' = 'FULL',
+  rowId?: number
 ): Promise<boolean> {
   let updates: Partial<Customer> = {};
 
@@ -128,11 +129,11 @@ export async function updateReading(
     updates = { USER: user, CHI_SO: chiSo, THOIGIAN_GHI: thoiGian, GHI_CHU: ghiChu || '' };
   }
 
-  const { error } = await supabase
-    .from('customers')
-    .update(updates)
-    .eq('MA_KHANG', maKhang)
-    .eq('BCS', bcs);
+  // Ưu tiên ghi theo id dòng: 1 KH có thể có nhiều điểm đo (MA_DDO) cùng BCS,
+  // ghi theo MA_KHANG+BCS sẽ đè chỉ số lên tất cả điểm đo đó.
+  let q = supabase.from('customers').update(updates);
+  q = rowId != null ? q.eq('id', rowId) : q.eq('MA_KHANG', maKhang).eq('BCS', bcs);
+  const { error } = await q;
 
   if (error) {
     console.error('Supabase updateReading error:', error);

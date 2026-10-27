@@ -6,6 +6,7 @@ import { buildGhiChu } from '../lib/ghiChu';
 import * as XLSX from 'xlsx';
 
 interface ImportRow {
+  id: number;
   maKhang: string;
   bcs: string;
   tenKhang: string;
@@ -17,6 +18,7 @@ interface ImportPreview {
   toWrite: ImportRow[];
   hasReading: Array<{ maKhang: string; tenKhang: string; chiSo: string }>;
   notFound: string[];
+  ambiguous: string[]; // KH có nhiều điểm đo cùng BCS, file không đủ thông tin để phân biệt
   notFilled: number;
 }
 
@@ -64,29 +66,49 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
         const wb = XLSX.read(data, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json<any>(sheet);
-        // Dùng TOÀN BỘ customers (không lọc theo nhân viên)
-        const customerMap = new Map(customers.map(c => [String(c.MA_KHANG), c]));
+        // Dùng TOÀN BỘ customers, khớp theo MA_KHANG + BCS (1 KH có nhiều BCS / nhiều điểm đo)
+        const norm = (v: any) => String(v ?? '').trim();
+        const byKhBcs = new Map<string, Customer[]>();
+        for (const c of customers) {
+          const k = norm(c.MA_KHANG) + '|' + norm(c.BCS);
+          const arr = byKhBcs.get(k);
+          if (arr) arr.push(c); else byKhBcs.set(k, [c]);
+        }
         const toWrite: ImportRow[] = [];
         const hasReadingRows: ImportPreview['hasReading'] = [];
         const notFound: string[] = [];
+        const ambiguous: string[] = [];
+        const usedIds = new Set<number>();
         let notFilled = 0;
         for (const row of rows) {
-          const maKhang = String(row['MA_KHANG'] ?? row['Mã KH'] ?? '').trim();
+          const maKhang = norm(row['MA_KHANG'] ?? row['Mã KH']);
           if (!maKhang) continue;
-          const chiSoMoi = String(row['Chỉ số mới'] ?? row['CHI_SO'] ?? row['Chỉ Số'] ?? '').trim();
+          const chiSoMoi = norm(row['Chỉ số mới'] ?? row['CHI_SO'] ?? row['Chỉ Số']);
           if (!chiSoMoi) { notFilled++; continue; }
-          const customer = customerMap.get(maKhang);
-          if (!customer) { notFound.push(maKhang); continue; }
+          const bcs = norm(row['BCS'] ?? row['Mã Lộ Trình (BCS)']);
+          const maDdo = norm(row['MA_DDO'] ?? row['Mã Điểm Đo']);
+          const soCto = norm(row['SO_CTO'] ?? row['Số Công Tơ']);
+          let candidates = bcs
+            ? (byKhBcs.get(maKhang + '|' + bcs) ?? [])
+            : customers.filter(c => norm(c.MA_KHANG) === maKhang);
+          // Nhiều điểm đo cùng BCS → lọc thêm theo MA_DDO, rồi Số công tơ
+          if (candidates.length > 1 && maDdo) candidates = candidates.filter(c => norm(c.MA_DDO) === maDdo);
+          if (candidates.length > 1 && soCto) candidates = candidates.filter(c => norm(c.SO_CTO) === soCto);
+          if (candidates.length === 0) { notFound.push(bcs ? `${maKhang} (${bcs})` : maKhang); continue; }
+          if (candidates.length > 1) { ambiguous.push(bcs ? `${maKhang} (${bcs})` : maKhang); continue; }
+          const customer = candidates[0];
+          if (usedIds.has(customer.id)) continue; // dòng lặp trong file
+          usedIds.add(customer.id);
           const maLoi = String(row['Mã lỗi'] ?? row['Mã Lỗi'] ?? '').trim();
           const ghiChuNote = String(row['Ghi chú'] ?? row['Ghi Chú'] ?? row['GHI_CHU'] ?? '').trim();
           const ghiChu = maLoi ? buildGhiChu(maLoi, ghiChuNote) : ghiChuNote;
           if (hasReadingVal(customer.CHI_SO)) {
             hasReadingRows.push({ maKhang, tenKhang: customer.TEN_KHANG, chiSo: String(customer.CHI_SO) });
           } else {
-            toWrite.push({ maKhang, bcs: customer.BCS || '', tenKhang: customer.TEN_KHANG, chiSoMoi, ghiChu });
+            toWrite.push({ id: customer.id, maKhang, bcs: customer.BCS || '', tenKhang: customer.TEN_KHANG, chiSoMoi, ghiChu });
           }
         }
-        setImportPreview({ toWrite, hasReading: hasReadingRows, notFound, notFilled });
+        setImportPreview({ toWrite, hasReading: hasReadingRows, notFound, ambiguous, notFilled });
         setImportResult(null);
       } catch {
         alert('Không thể đọc file. Dùng file .xlsx đúng định dạng.');
@@ -108,10 +130,10 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
       const chunk = toWrite.slice(i, i + CHUNK);
       await Promise.all(chunk.map(async (row) => {
         try {
-          await updateReading(row.maKhang, row.bcs, row.chiSoMoi, currentUser.HO_TEN, thoiGian, row.ghiChu);
+          await updateReading(row.maKhang, row.bcs, row.chiSoMoi, currentUser.HO_TEN, thoiGian, row.ghiChu, 'FULL', row.id);
           success++;
           if (onUpdateLocalCustomer) {
-            onUpdateLocalCustomer(row.maKhang, { CHI_SO: row.chiSoMoi, USER: currentUser.HO_TEN, THOIGIAN_GHI: thoiGian, GHI_CHU: row.ghiChu });
+            onUpdateLocalCustomer(row.id, { CHI_SO: row.chiSoMoi, USER: currentUser.HO_TEN, THOIGIAN_GHI: thoiGian, GHI_CHU: row.ghiChu });
           }
         } catch {
           errors.push(row.maKhang);
@@ -155,7 +177,8 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
       'Chỉ Số': hasReading(c.CHI_SO) ? c.CHI_SO : '',
       'Ghi Chú': c.GHI_CHU || '',
       'Người Ghi': c.USER || '',
-      'Thời Gian Ghi': c.THOIGIAN_GHI || ''
+      'Thời Gian Ghi': c.THOIGIAN_GHI || '',
+      'Mã Điểm Đo': c.MA_DDO || '',
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -174,7 +197,8 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
       { wch: 10 }, // Chỉ Số
       { wch: 25 }, // Ghi Chú
       { wch: 20 }, // Người Ghi
-      { wch: 20 }  // Thời Gian
+      { wch: 20 }, // Thời Gian
+      { wch: 20 }  // Mã Điểm Đo
     ];
 
     const currentDate = new Date();
@@ -447,6 +471,9 @@ export default function AdminManagement({ currentUser, onRefreshCustomers, onUpd
               </div>
               {importPreview.notFound.length > 0 && (
                 <p className="text-xs text-red-600 mb-3">⚠️ {importPreview.notFound.length} mã không tìm thấy trong hệ thống.</p>
+              )}
+              {importPreview.ambiguous.length > 0 && (
+                <p className="text-xs text-orange-600 mb-3">⚠️ {importPreview.ambiguous.length} dòng bỏ qua vì KH có nhiều điểm đo cùng BCS mà file không có MA_DDO / Số công tơ để phân biệt: {importPreview.ambiguous.slice(0, 10).join(', ')}{importPreview.ambiguous.length > 10 ? '…' : ''}</p>
               )}
               {importPreview.notFilled > 0 && (
                 <p className="text-xs text-gray-500 mb-3">{importPreview.notFilled} dòng không có chỉ số → bỏ qua.</p>
